@@ -165,6 +165,7 @@ def run_diffusion_gemma_inference(
             reset_cuda_peak_memory()
             synchronize_cuda()
             started_at = time.perf_counter()
+            callback.start_timing()
             try:
                 output = pipeline(
                     prompt=prompt,

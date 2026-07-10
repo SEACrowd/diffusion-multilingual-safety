@@ -33,6 +33,9 @@ class DiffusionLoggingCallback:
         self.performance_logger = performance_logger
         self.router_tracer = router_tracer
 
+    def start_timing(self) -> None:
+        self.previous_callback_time = time.perf_counter()
+
     def __call__(
         self,
         pipe: Any,

@@ -11,12 +11,12 @@ from typing import Any, TextIO
 class JsonlWriter:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self._output: TextIO | None = None
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._output: TextIO | None = self.path.open("a", encoding="utf-8")
 
     def write(self, value: Any) -> None:
         if self._output is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._output = self.path.open("a", encoding="utf-8")
+            raise RuntimeError(f"Cannot write to closed JSONL writer for {self.path}")
         self._output.write(json.dumps(value, ensure_ascii=False) + "\n")
         self._output.flush()
 

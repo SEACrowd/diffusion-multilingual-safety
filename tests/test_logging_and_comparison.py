@@ -6,20 +6,32 @@ from pathlib import Path
 
 import torch
 
-from config_parser import parse_app_config
-from dataloader.collate import collate_multilingual_safety_batch
 from evaluation.paired_outputs import create_paired_outputs
 from logging_utils.moe import route_change_rate, summarize_router_output
 from logging_utils.writer import read_jsonl, write_jsonl
 
+try:
+    from config_parser import parse_app_config
+    from dataloader.collate import collate_multilingual_safety_batch
+except ModuleNotFoundError:
+    parse_app_config = None
+    collate_multilingual_safety_batch = None
+
 
 class ConfigurationAndDataTests(unittest.TestCase):
+    @unittest.skipIf(parse_app_config is None, "project dependencies are not installed")
     def test_default_config_runs_both_models(self) -> None:
+        assert parse_app_config is not None
         parsed = parse_app_config({"UNRELATED": "value"})
         self.assertEqual(parsed.models_to_run, ("gemma", "diffusion_gemma"))
         self.assertEqual(parsed.dataloader.batch_size, 1)
 
+    @unittest.skipIf(
+        collate_multilingual_safety_batch is None,
+        "project dependencies are not installed",
+    )
     def test_collate_keeps_raw_text_and_manifest_identity(self) -> None:
+        assert collate_multilingual_safety_batch is not None
         batch = collate_multilingual_safety_batch(
             [
                 {

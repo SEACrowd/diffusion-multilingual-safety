@@ -29,7 +29,7 @@ class PerformanceLogger:
                 "event": "performance_step",
                 **context,
                 "step_latency_s": step_latency,
-                "scheduler_latency_s": scheduler_latency,
+                "scheduler_host_latency_s": scheduler_latency,
                 "changed_count": changed_count,
                 "accepted_count": accepted_count,
             }
