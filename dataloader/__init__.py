@@ -1,6 +1,6 @@
-"""Public dataloader API."""
+"""Public model-neutral dataloader API."""
 
-from .collate import build_diffusion_gemma_collate_fn, collate_diffusion_gemma_batch
+from .collate import collate_multilingual_safety_batch
 from .data import (
     DATASET_COLUMNS,
     DATASET_NAME,
@@ -13,6 +13,8 @@ from .data import (
 )
 from .load import (
     MultilingualSafetyDataConfig,
-    create_multilingual_safety_dataloader,
+    create_manifest_dataloader,
     load_multilingual_safety_dataset,
+    materialize_input_manifest,
+    resolve_dataset_revision,
 )

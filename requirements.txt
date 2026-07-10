@@ -1,6 +1,6 @@
 accelerate
 datasets
-diffusers
+diffusers==0.39.0
 evaluate
 huggingface-hub
 numpy
@@ -12,6 +12,6 @@ scikit-learn
 sentencepiece
 tokenizers
 tqdm
-transformers
+transformers==5.13.0
 python-dotenv
 pydantic
