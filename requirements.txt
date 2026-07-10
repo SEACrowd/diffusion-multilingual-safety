@@ -1,0 +1,17 @@
+accelerate
+datasets
+diffusers
+evaluate
+huggingface-hub
+numpy
+pandas
+pillow
+protobuf
+safetensors
+scikit-learn
+sentencepiece
+tokenizers
+tqdm
+transformers
+python-dotenv
+pydantic
