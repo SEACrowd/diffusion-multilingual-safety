@@ -63,6 +63,24 @@ The safe default processes one batch with both models:
 python main.py
 ```
 
+All experiment settings come from `config.py` (or typed environment-variable
+overrides), so no model or dataset flags are required. To detach the same run in
+the background, use:
+
+```powershell
+python main.py -d
+```
+
+In Google Colab, prefix it with `!`:
+
+```python
+!python main.py -d
+```
+
+The command prints the experiment ID, result directory, PID file, and daemon log
+path before returning. The detached process continues while the Colab runtime is
+alive. Follow the printed log path with `!tail -f <log-path>`.
+
 Set `INFERENCE_MAX_BATCHES = None` in `config.py` to process the complete pinned
 manifest. Models run sequentially so both 26B checkpoints are never intentionally
 resident at the same time. BF16 inference requires roughly 58 GB for weights

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import gc
 import os
 import re
+import subprocess
+import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +30,78 @@ from models.gemma import create_gemma_model, run_gemma_inference
 
 
 EXPERIMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the configured model pipeline.")
+    parser.add_argument(
+        "-d",
+        "--daemon",
+        action="store_true",
+        help="Run in the background and write stdout/stderr to logging/_daemon/.",
+    )
+    return parser.parse_args(argv)
+
+
+def launch_daemon(config: AppConfig) -> int:
+    """Start a detached foreground-mode child and return its process ID."""
+    experiment_id = resolve_experiment_id(config.logging.experiment_id)
+    logging_root = Path(config.logging.root)
+    daemon_root = logging_root / "_daemon"
+    daemon_root.mkdir(parents=True, exist_ok=True)
+    launch_id = uuid4().hex[:8]
+    log_path = daemon_root / f"{experiment_id}-{launch_id}.log"
+    pid_path = daemon_root / f"{experiment_id}-{launch_id}.pid"
+
+    child_environment = os.environ.copy()
+    child_environment["LOGGING_EXPERIMENT_ID"] = experiment_id
+    child_environment["PYTHONUNBUFFERED"] = "1"
+    command = [sys.executable, "-u", str(Path(__file__).resolve())]
+    common_options = {
+        "cwd": str(Path.cwd()),
+        "env": child_environment,
+        "stdin": subprocess.DEVNULL,
+        "stderr": subprocess.STDOUT,
+        "close_fds": True,
+    }
+
+    with log_path.open("a", encoding="utf-8") as log_output:
+        common_options["stdout"] = log_output
+        if os.name == "nt":
+            creation_flags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
+            process = subprocess.Popen(
+                command,
+                creationflags=creation_flags,
+                **common_options,
+            )
+        else:
+            process = subprocess.Popen(
+                command,
+                start_new_session=True,
+                **common_options,
+            )
+
+    pid_path.write_text(f"{process.pid}\n", encoding="utf-8")
+    result_path = logging_root / experiment_id
+    print(f"Pipeline started in the background (PID {process.pid}).")
+    print(f"Experiment ID: {experiment_id}")
+    print(f"Daemon log: {log_path.resolve()}")
+    print(f"PID file: {pid_path.resolve()}")
+    print(f"Results: {result_path.resolve()}")
+    return process.pid
+
+
+def cli(argv: Sequence[str] | None = None) -> int:
+    load_dotenv()
+    args = parse_cli_args(argv)
+    config = parse_app_config()
+    if args.daemon:
+        launch_daemon(config)
+        return 0
+    main(config)
+    return 0
 
 
 def main(config: AppConfig) -> dict[str, int]:
@@ -254,5 +330,4 @@ def release_cuda_memory() -> None:
 
 
 if __name__ == "__main__":
-    load_dotenv()
-    main(parse_app_config())
+    raise SystemExit(cli())
