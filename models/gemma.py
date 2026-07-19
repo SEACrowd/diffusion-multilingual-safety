@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +15,7 @@ from logging_utils.gemma.logits import GemmaLogitsLogger
 from logging_utils.gemma.router import GemmaRouterTracer
 from logging_utils.gemma.tokens import GemmaTokenLogger
 from logging_utils.outcomes import OutputLogger
+from logging_utils.safety import best_effort, close_optional, create_optional
 
 from .common import (
     example_context,
@@ -77,27 +79,40 @@ def run_gemma_inference(
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    tokens = GemmaTokenLogger(root / "tokens.jsonl", processor)
+    tokens = create_optional(
+        "Gemma token",
+        lambda: GemmaTokenLogger(root / "tokens.jsonl", processor),
+    )
     logits = (
-        GemmaLogitsLogger(
-            root / "logits.jsonl",
-            top_k=log_top_k,
-            save_full_logits=save_full_logits,
-            full_logits_directory=root / "full_logits",
+        create_optional(
+            "Gemma logits",
+            lambda: GemmaLogitsLogger(
+                root / "logits.jsonl",
+                top_k=log_top_k,
+                save_full_logits=save_full_logits,
+                full_logits_directory=root / "full_logits",
+            ),
         )
         if log_logits
         else None
     )
     router = (
-        GemmaRouterTracer(
-            root / "moe.jsonl",
-            selected_experts=selected_expert_count(model),
+        create_optional(
+            "Gemma MoE",
+            lambda: GemmaRouterTracer(
+                root / "moe.jsonl",
+                selected_experts=selected_expert_count(model),
+            ),
         )
         if log_moe
         else None
     )
-    if router is not None:
-        router.attach(model)
+    if router is not None and not best_effort(
+        "Gemma MoE attachment",
+        lambda: router.attach(model),
+    ):
+        close_optional("Gemma MoE", router)
+        router = None
 
     generation_configuration = {
         "max_new_tokens": max_new_tokens,
@@ -140,7 +155,7 @@ def run_gemma_inference(
                 "max_new_tokens": max_new_tokens,
                 "do_sample": do_sample,
                 "return_dict_in_generate": True,
-                "output_scores": log_logits,
+                "output_scores": logits is not None,
             }
             if do_sample:
                 generation_kwargs.update(
@@ -159,33 +174,62 @@ def run_gemma_inference(
 
             generated = generation_output.sequences[0, input_token_count:]
             generated_token_ids = generated.detach().cpu().tolist()
-            raw_text = processor.decode(
-                generated,
-                skip_special_tokens=False,
-                clean_up_tokenization_spaces=False,
-            )
-            final_text = parse_response_text(processor, raw_text)
+            response_error = None
+            try:
+                raw_text = processor.decode(
+                    generated,
+                    skip_special_tokens=False,
+                    clean_up_tokenization_spaces=False,
+                )
+                final_text = parse_response_text(processor, raw_text)
+            except Exception as error:
+                raw_text = None
+                final_text = ""
+                response_error = f"{type(error).__name__}: {error}"
+                warnings.warn(
+                    "Gemma response decoding failed; generated token IDs were preserved",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             outputs.log(
                 context=output_context,
                 final_text=final_text,
                 final_token_ids=generated_token_ids,
                 input_token_count=input_token_count,
                 rendered_prompt=rendered_prompt,
+                raw_response=raw_text,
+                response_error=response_error,
             )
-            tokens.log_generation(context, generated_token_ids)
+            best_effort(
+                "Gemma response display",
+                lambda: print(
+                    f"[gemma] response for {metadata['id']}:\n"
+                    f"{final_text or '[decoding failed; token IDs saved]'}\n",
+                    flush=True,
+                ),
+            )
+            if tokens is not None and not best_effort(
+                "Gemma token",
+                lambda: tokens.log_generation(context, generated_token_ids),
+            ):
+                close_optional("Gemma token", tokens)
+                tokens = None
             if logits is not None:
-                logits.log_generation(
-                    context=context,
-                    scores=tuple(generation_output.scores),
-                    generated_token_ids=generated_token_ids,
-                )
+                if not best_effort(
+                    "Gemma logits",
+                    lambda: logits.log_generation(
+                        context=context,
+                        scores=tuple(generation_output.scores),
+                        generated_token_ids=generated_token_ids,
+                    ),
+                ):
+                    close_optional("Gemma logits", logits)
+                    logits = None
             count += 1
     finally:
         outputs.close()
-        tokens.close()
-        if logits is not None:
-            logits.close()
-        if router is not None:
-            router.close()
+        close_optional("Gemma token", tokens)
+        close_optional("Gemma logits", logits)
+        close_optional("Gemma MoE", router)
 
     return count

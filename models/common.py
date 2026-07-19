@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from hashlib import sha256
 from typing import Any, Iterator
 
@@ -86,7 +87,15 @@ def parse_response_text(processor: Any, raw_text: str) -> str:
     parser = getattr(processor, "parse_response", None)
     if not callable(parser):
         return raw_text
-    parsed = parser(raw_text)
+    try:
+        parsed = parser(raw_text)
+    except Exception as exc:
+        warnings.warn(
+            f"Response parsing failed; preserving raw decoded output: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return raw_text
     if isinstance(parsed, str):
         return parsed
     if isinstance(parsed, dict):

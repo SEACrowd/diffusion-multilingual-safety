@@ -1,9 +1,8 @@
-# Gemma 4 Multilingual Safety Comparison
+# Gemma 4 Multilingual Safety Inference
 
 Runs the same pinned multilingual-safety examples through Gemma 4 26B A4B and
 DiffusionGemma 26B A4B. Each model writes separate JSONL output, logit, and
-Mixture-of-Experts traces. A final streaming join creates paired records by
-dataset example ID.
+Mixture-of-Experts traces for direct inspection of each model's response.
 
 ## Installation
 
@@ -97,9 +96,10 @@ LOG_LOGITS = True
 LOG_SAVE_FULL_LOGITS = False
 ```
 
-Full vocabulary logits are disabled because their storage cost is extreme.
-Compact top-k, entropy, selected-token, and router-utilization summaries remain
-enabled.
+Final model responses, Gemma token events, and DiffusionGemma canvas steps remain
+enabled together with compact logit and MoE telemetry. Full-vocabulary tensor
+dumps remain disabled because of their extreme storage cost. All auxiliary
+telemetry is guarded so a logging failure cannot discard a completed response.
 
 ## Ten-example smoke test
 
@@ -109,11 +109,11 @@ Run the real end-to-end pipeline on the first 10 matching dataset records:
 python smoke_test_pipeline.py
 ```
 
-The smoke runner uses both real models, writes the normal telemetry, creates the
-paired comparison, and then checks the manifest, output counts, and core output
-files. It forces `DATASET_MAX_SAMPLES = 10`, disables dataset shuffling, and
-removes `INFERENCE_MAX_BATCHES` for that invocation so all 10 records are
-processed regardless of batch size. It does not modify `config.py`.
+The smoke runner uses both real models, writes the normal telemetry, and then
+checks each model's output count and core output files. It forces
+`DATASET_MAX_SAMPLES = 10`, disables dataset shuffling, and removes
+`INFERENCE_MAX_BATCHES` for that invocation so all 10 records are processed
+regardless of batch size. It does not modify `config.py`.
 
 Useful overrides:
 
@@ -155,6 +155,12 @@ logging/<experiment_id>/
     canvas.jsonl
     logits.jsonl
     moe.jsonl
-  comparison/
-    pairs.jsonl
 ```
+
+`outputs.jsonl` is the primary result. It contains one JSON object per completed
+dataset ID. The clean answer is in `response` (and the compatibility alias
+`final_text`), `raw_response` retains control/special tokens when available, and
+`rendered_prompt` is the formatted model input—not the answer. If a model fails,
+its directory receives `error.json`; the other configured model is still
+attempted. Token, canvas, logit, and MoE files are auxiliary telemetry and cannot
+prevent a completed response from being saved.

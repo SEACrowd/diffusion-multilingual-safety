@@ -1,7 +1,6 @@
 accelerate
 datasets
 diffusers==0.39.0
-evaluate
 huggingface-hub
 numpy
 pandas

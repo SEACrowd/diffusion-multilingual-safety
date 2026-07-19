@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,7 @@ from logging_utils.diffusion_gemma.logits import DiffusionLogitsLogger
 from logging_utils.diffusion_gemma.router import DiffusionGemmaRouterTracer
 from logging_utils.diffusion_gemma.scheduler import TracingEntropyBoundScheduler
 from logging_utils.outcomes import OutputLogger
+from logging_utils.safety import best_effort, close_optional, create_optional
 
 from .common import (
     example_context,
@@ -83,27 +85,40 @@ def run_diffusion_gemma_inference(
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    canvas = CanvasLogger(root / "canvas.jsonl", pipeline.processor)
+    canvas = create_optional(
+        "DiffusionGemma canvas",
+        lambda: CanvasLogger(root / "canvas.jsonl", pipeline.processor),
+    )
     logits = (
-        DiffusionLogitsLogger(
-            root / "logits.jsonl",
-            top_k=log_top_k,
-            save_full_logits=save_full_logits,
-            full_logits_directory=root / "full_logits",
+        create_optional(
+            "DiffusionGemma logits",
+            lambda: DiffusionLogitsLogger(
+                root / "logits.jsonl",
+                top_k=log_top_k,
+                save_full_logits=save_full_logits,
+                full_logits_directory=root / "full_logits",
+            ),
         )
         if log_logits
         else None
     )
     router = (
-        DiffusionGemmaRouterTracer(
-            root / "moe.jsonl",
-            selected_experts=selected_expert_count(pipeline.model),
+        create_optional(
+            "DiffusionGemma MoE",
+            lambda: DiffusionGemmaRouterTracer(
+                root / "moe.jsonl",
+                selected_experts=selected_expert_count(pipeline.model),
+            ),
         )
         if log_moe
         else None
     )
-    if router is not None:
-        router.attach(pipeline.model)
+    if router is not None and not best_effort(
+        "DiffusionGemma MoE attachment",
+        lambda: router.attach(pipeline.model),
+    ):
+        close_optional("DiffusionGemma MoE", router)
+        router = None
 
     sampler_configuration = scheduler_configuration(pipeline.scheduler)
     generation_configuration = {
@@ -114,6 +129,7 @@ def run_diffusion_gemma_inference(
         "scheduler": sampler_configuration,
     }
     count = 0
+    disabled_components: set[str] = set()
     try:
         for prompt, metadata, reference in iter_examples(dataloader, max_batches):
             run_id = uuid4().hex
@@ -148,6 +164,7 @@ def run_diffusion_gemma_inference(
                 canvas_logger=canvas,
                 logits_logger=logits,
                 router_tracer=router,
+                disabled_components=disabled_components,
             )
 
             if router is not None:
@@ -170,22 +187,64 @@ def run_diffusion_gemma_inference(
                     router.abort_example()
                 raise
 
-            generated_token_ids = output.sequences[0].detach().cpu().tolist()
+            generated = output.sequences[0].detach().cpu()
+            generated_token_ids = generated.tolist()
+            response_errors: list[str] = []
+            try:
+                raw_text = pipeline.processor.decode(
+                    generated,
+                    skip_special_tokens=False,
+                    clean_up_tokenization_spaces=False,
+                )
+            except Exception as error:
+                raw_text = None
+                response_errors.append(f"raw decode: {type(error).__name__}: {error}")
+
+            texts = getattr(output, "texts", None)
+            if texts and isinstance(texts[0], str):
+                final_text = texts[0]
+            else:
+                try:
+                    final_text = pipeline.processor.decode(
+                        generated,
+                        skip_special_tokens=True,
+                    )
+                except Exception as error:
+                    final_text = ""
+                    response_errors.append(
+                        f"clean decode: {type(error).__name__}: {error}"
+                    )
+            response_error = "; ".join(response_errors) or None
+            if not final_text:
+                warnings.warn(
+                    "DiffusionGemma response decoding failed or returned empty text; "
+                    "generated token IDs were preserved",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             outputs.log(
                 context=output_context,
-                final_text=output.texts[0],
+                final_text=final_text,
                 final_token_ids=generated_token_ids,
                 input_token_count=input_token_count,
                 rendered_prompt=rendered_prompt,
+                raw_response=raw_text,
+                response_error=response_error,
+            )
+            best_effort(
+                "DiffusionGemma response display",
+                lambda: print(
+                    f"[diffusion_gemma] response for {metadata['id']}:\n"
+                    f"{final_text or '[decoding failed; token IDs saved]'}\n",
+                    flush=True,
+                ),
             )
             count += 1
     finally:
         outputs.close()
-        canvas.close()
-        if logits is not None:
-            logits.close()
-        if router is not None:
-            router.close()
+        close_optional("DiffusionGemma canvas", canvas)
+        close_optional("DiffusionGemma logits", logits)
+        close_optional("DiffusionGemma MoE", router)
 
     return count
 

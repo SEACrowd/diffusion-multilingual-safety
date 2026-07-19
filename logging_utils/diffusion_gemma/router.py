@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ class DiffusionGemmaRouterTracer:
         self.pending: list[tuple[str, int, dict[str, Any], torch.Tensor]] = []
         self.previous_decoder_routes: dict[tuple[int, int], torch.Tensor] = {}
         self.handles: list[Any] = []
+        self.disabled = False
 
     def attach(self, model: torch.nn.Module) -> None:
         for module_name, module in model.named_modules():
@@ -35,6 +37,8 @@ class DiffusionGemmaRouterTracer:
             )
 
     def begin_example(self, context: dict[str, Any]) -> None:
+        if self.disabled:
+            return
         self.context = context
         self.pending.clear()
         self.previous_decoder_routes.clear()
@@ -42,29 +46,35 @@ class DiffusionGemmaRouterTracer:
     def flush_step(self, step_context: dict[str, Any]) -> None:
         if self.context is None:
             return
-        canvas_index = int(step_context["canvas_index"])
-        for phase, layer_index, summary, routes in self.pending:
-            record = {
-                "event": "moe_route",
-                **self.context,
-                **step_context,
-                "phase": phase,
-                "layer_index": layer_index,
-                **summary,
-            }
-            if phase == "denoising":
-                route_key = (canvas_index, layer_index)
-                record["expert_set_change_rate"] = route_change_rate(
-                    routes,
-                    self.previous_decoder_routes.get(route_key),
-                )
-                self.previous_decoder_routes[route_key] = routes
-            self.writer.write(record)
-        self.pending.clear()
+        try:
+            canvas_index = int(step_context["canvas_index"])
+            for phase, layer_index, summary, routes in self.pending:
+                record = {
+                    "event": "moe_route",
+                    **self.context,
+                    **step_context,
+                    "phase": phase,
+                    "layer_index": layer_index,
+                    **summary,
+                }
+                if phase == "denoising":
+                    route_key = (canvas_index, layer_index)
+                    record["expert_set_change_rate"] = route_change_rate(
+                        routes,
+                        self.previous_decoder_routes.get(route_key),
+                    )
+                    self.previous_decoder_routes[route_key] = routes
+                self.writer.write(record)
+            self.pending.clear()
+        except Exception as error:
+            self.disable(error)
 
     def end_example(self) -> None:
         if self.pending:
-            raise RuntimeError("Unflushed DiffusionGemma router events remain after inference")
+            self.disable(
+                RuntimeError("Unflushed DiffusionGemma router events remain after inference")
+            )
+            return
         self.context = None
         self.previous_decoder_routes.clear()
 
@@ -79,14 +89,28 @@ class DiffusionGemmaRouterTracer:
         self.handles.clear()
         self.writer.close()
 
+    def disable(self, error: Exception) -> None:
+        if not self.disabled:
+            warnings.warn(
+                f"Optional DiffusionGemma MoE telemetry disabled after "
+                f"{type(error).__name__}: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        self.disabled = True
+        self.abort_example()
+
     def _router_hook(self, phase: str, layer_index: int):
         def hook(module: torch.nn.Module, args: tuple[Any, ...], output: Any) -> None:
             if self.context is None:
                 return
-            summary, routes = summarize_router_output(
-                output,
-                selected_experts=self.selected_experts,
-            )
-            self.pending.append((phase, layer_index, summary, routes))
+            try:
+                summary, routes = summarize_router_output(
+                    output,
+                    selected_experts=self.selected_experts,
+                )
+                self.pending.append((phase, layer_index, summary, routes))
+            except Exception as error:
+                self.disable(error)
 
         return hook

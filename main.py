@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,11 +17,10 @@ import diffusers
 import torch
 import transformers
 from dotenv import load_dotenv
-from huggingface_hub import HfApi, login
+from huggingface_hub import HfApi
 
 from config_parser import AppConfig, parse_app_config
 from dataloader import create_manifest_dataloader, materialize_input_manifest
-from evaluation.paired_outputs import create_paired_outputs
 from logging_utils.writer import write_json
 from models.diffusion_gemma import (
     create_diffusion_gemma_pipeline,
@@ -106,8 +106,6 @@ def cli(argv: Sequence[str] | None = None) -> int:
 
 def main(config: AppConfig) -> dict[str, int]:
     hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
-    if hf_token:
-        login(token=hf_token, add_to_git_credential=False)
 
     experiment_id = resolve_experiment_id(config.logging.experiment_id)
     experiment_root = Path(config.logging.root) / experiment_id
@@ -132,6 +130,7 @@ def main(config: AppConfig) -> dict[str, int]:
     )
 
     completed: dict[str, int] = {}
+    failures: dict[str, dict[str, str]] = {}
     for model_kind in config.models_to_run:
         dataloader = create_manifest_dataloader(
             inputs_path,
@@ -139,35 +138,48 @@ def main(config: AppConfig) -> dict[str, int]:
             num_workers=config.dataloader.num_workers,
             pin_memory=config.dataloader.pin_memory,
         )
-        if model_kind == "gemma":
-            completed[model_kind] = run_gemma(
-                config,
-                dataloader,
-                experiment_id,
-                experiment_root,
-                model_revisions[model_kind],
-                hf_token,
-            )
-        elif model_kind == "diffusion_gemma":
-            completed[model_kind] = run_diffusion_gemma(
-                config,
-                dataloader,
-                experiment_id,
-                experiment_root,
-                model_revisions[model_kind],
-                hf_token,
-            )
-        release_cuda_memory()
-
-    if {"gemma", "diffusion_gemma"}.issubset(completed):
-        comparison_root = experiment_root / "comparison"
-        completed["paired"] = create_paired_outputs(
-            gemma_outputs_path=experiment_root / "gemma" / "outputs.jsonl",
-            diffusion_outputs_path=experiment_root / "diffusion_gemma" / "outputs.jsonl",
-            pairs_path=comparison_root / "pairs.jsonl",
-        )
+        try:
+            if model_kind == "gemma":
+                completed[model_kind] = run_gemma(
+                    config,
+                    dataloader,
+                    experiment_id,
+                    experiment_root,
+                    model_revisions[model_kind],
+                    hf_token,
+                )
+            elif model_kind == "diffusion_gemma":
+                completed[model_kind] = run_diffusion_gemma(
+                    config,
+                    dataloader,
+                    experiment_id,
+                    experiment_root,
+                    model_revisions[model_kind],
+                    hf_token,
+                )
+        except Exception as error:
+            error_record = {
+                "model_kind": model_kind,
+                "error_type": type(error).__name__,
+                "message": str(error),
+                "traceback": traceback.format_exc(),
+                "failed_at": datetime.now(UTC).isoformat(),
+            }
+            failures[model_kind] = error_record
+            model_root = experiment_root / model_kind
+            model_root.mkdir(parents=True, exist_ok=True)
+            write_json(model_root / "error.json", error_record)
+            print(error_record["traceback"], file=sys.stderr, flush=True)
+        finally:
+            release_cuda_memory()
 
     print(f"Experiment {experiment_id}: {completed}")
+    if failures:
+        failed_models = ", ".join(failures)
+        raise RuntimeError(
+            f"Experiment {experiment_id} failed for: {failed_models}. "
+            "See each model's error.json for details."
+        )
     return completed
 
 

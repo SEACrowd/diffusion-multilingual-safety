@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ class GemmaRouterTracer:
         self.forward_index = -1
         self.pending: list[dict[str, Any]] = []
         self.handles: list[Any] = []
+        self.disabled = False
 
     def attach(self, model: torch.nn.Module) -> None:
         self.handles.append(
@@ -36,6 +38,8 @@ class GemmaRouterTracer:
             )
 
     def begin_example(self, context: dict[str, Any]) -> None:
+        if self.disabled:
+            return
         self.context = context
         self.forward_index = -1
         self.pending.clear()
@@ -49,6 +53,18 @@ class GemmaRouterTracer:
             handle.remove()
         self.handles.clear()
         self.writer.close()
+
+    def disable(self, error: Exception) -> None:
+        if not self.disabled:
+            warnings.warn(
+                f"Optional Gemma MoE telemetry disabled after "
+                f"{type(error).__name__}: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        self.disabled = True
+        self.context = None
+        self.pending.clear()
 
     def _before_forward(
         self,
@@ -70,31 +86,37 @@ class GemmaRouterTracer:
     ) -> None:
         if self.context is None:
             return
-        phase = "prefill" if self.forward_index == 0 else "autoregressive_decode"
-        for summary in self.pending:
-            self.writer.write(
-                {
-                    "event": "moe_route",
-                    **self.context,
-                    "phase": phase,
-                    "forward_index": self.forward_index,
-                    "input_generated_token_step": (
-                        None if self.forward_index == 0 else self.forward_index - 1
-                    ),
-                    "predicted_token_step": self.forward_index,
-                    **summary,
-                }
-            )
-        self.pending.clear()
+        try:
+            phase = "prefill" if self.forward_index == 0 else "autoregressive_decode"
+            for summary in self.pending:
+                self.writer.write(
+                    {
+                        "event": "moe_route",
+                        **self.context,
+                        "phase": phase,
+                        "forward_index": self.forward_index,
+                        "input_generated_token_step": (
+                            None if self.forward_index == 0 else self.forward_index - 1
+                        ),
+                        "predicted_token_step": self.forward_index,
+                        **summary,
+                    }
+                )
+            self.pending.clear()
+        except Exception as error:
+            self.disable(error)
 
     def _router_hook(self, layer_index: int):
         def hook(module: torch.nn.Module, args: tuple[Any, ...], output: Any) -> None:
             if self.context is None:
                 return
-            summary, _ = summarize_router_output(
-                output,
-                selected_experts=self.selected_experts,
-            )
-            self.pending.append({"layer_index": layer_index, **summary})
+            try:
+                summary, _ = summarize_router_output(
+                    output,
+                    selected_experts=self.selected_experts,
+                )
+                self.pending.append({"layer_index": layer_index, **summary})
+            except Exception as error:
+                self.disable(error)
 
         return hook

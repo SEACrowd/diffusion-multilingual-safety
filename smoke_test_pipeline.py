@@ -132,8 +132,6 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
         )
 
     expected_counts = {model: expected_count for model in config.models_to_run}
-    if set(MODEL_CHOICES).issubset(config.models_to_run):
-        expected_counts["paired"] = expected_count
     mismatches = {
         name: {"expected": expected, "actual": completed.get(name)}
         for name, expected in expected_counts.items()
@@ -153,13 +151,6 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
                 experiment_root / model / "outputs.jsonl",
             ]
         )
-    if "gemma" in config.models_to_run:
-        required_paths.append(experiment_root / "gemma" / "tokens.jsonl")
-    if "diffusion_gemma" in config.models_to_run:
-        required_paths.append(experiment_root / "diffusion_gemma" / "canvas.jsonl")
-    if set(MODEL_CHOICES).issubset(config.models_to_run):
-        required_paths.append(experiment_root / "comparison" / "pairs.jsonl")
-
     missing_paths = [str(path) for path in required_paths if not path.is_file()]
     if missing_paths:
         raise RuntimeError(f"Missing pipeline artifacts: {missing_paths}")
