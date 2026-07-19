@@ -151,8 +151,6 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
         required_paths.extend(
             [
                 experiment_root / model / "outputs.jsonl",
-                experiment_root / model / "performance.jsonl",
-                experiment_root / model / "source_summary.json",
             ]
         )
     if "gemma" in config.models_to_run:
@@ -160,12 +158,7 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
     if "diffusion_gemma" in config.models_to_run:
         required_paths.append(experiment_root / "diffusion_gemma" / "canvas.jsonl")
     if set(MODEL_CHOICES).issubset(config.models_to_run):
-        required_paths.extend(
-            [
-                experiment_root / "comparison" / "pairs.jsonl",
-                experiment_root / "comparison" / "source_summary.json",
-            ]
-        )
+        required_paths.append(experiment_root / "comparison" / "pairs.jsonl")
 
     missing_paths = [str(path) for path in required_paths if not path.is_file()]
     if missing_paths:

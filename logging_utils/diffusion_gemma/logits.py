@@ -37,15 +37,13 @@ class DiffusionLogitsLogger:
         k = min(self.top_k, row_logits.shape[-1])
         log_normalizer = torch.logsumexp(row_logits, dim=-1, keepdim=True)
         top_values, top_tokens = torch.topk(row_logits, k=k, dim=-1)
-        log_probabilities = row_logits - log_normalizer
+        entropy = torch.distributions.Categorical(logits=row_logits).entropy()
         record: dict[str, Any] = {
             "event": "logits_step",
             **context,
             "top_k_token_ids": top_tokens.cpu().tolist(),
             "top_k_probabilities": torch.exp(top_values - log_normalizer).cpu().tolist(),
-            "entropy_per_position": (
-                -(log_probabilities.exp() * log_probabilities).sum(dim=-1).cpu().tolist()
-            ),
+            "entropy_per_position": entropy.cpu().tolist(),
             "sampled_token_ids": sampled_tokens[0].detach().cpu().tolist(),
             "sampled_token_probabilities": (
                 sampled_probabilities[0].detach().float().cpu().tolist()

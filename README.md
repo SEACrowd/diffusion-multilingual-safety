@@ -1,9 +1,9 @@
 # Gemma 4 Multilingual Safety Comparison
 
 Runs the same pinned multilingual-safety examples through Gemma 4 26B A4B and
-DiffusionGemma 26B A4B. Each model writes separate JSONL output, performance,
-logit, and Mixture-of-Experts traces. A final streaming join creates paired
-records by dataset example ID.
+DiffusionGemma 26B A4B. Each model writes separate JSONL output, logit, and
+Mixture-of-Experts traces. A final streaming join creates paired records by
+dataset example ID.
 
 ## Installation
 
@@ -147,23 +147,14 @@ logging/<experiment_id>/
   inputs.jsonl
   gemma/
     outputs.jsonl
-    performance.jsonl
     tokens.jsonl
     logits.jsonl
     moe.jsonl
-    source_summary.json
   diffusion_gemma/
     outputs.jsonl
-    performance.jsonl
     canvas.jsonl
     logits.jsonl
     moe.jsonl
-    source_summary.json
   comparison/
     pairs.jsonl
-    source_summary.json
 ```
-
-`performance.jsonl` records whether telemetry was enabled. Instrumented timing
-should not be treated as a clean throughput benchmark because tensor reduction,
-CPU transfer, and JSON serialization add overhead.

@@ -163,13 +163,8 @@ def main(config: AppConfig) -> dict[str, int]:
         comparison_root = experiment_root / "comparison"
         completed["paired"] = create_paired_outputs(
             gemma_outputs_path=experiment_root / "gemma" / "outputs.jsonl",
-            gemma_performance_path=experiment_root / "gemma" / "performance.jsonl",
             diffusion_outputs_path=experiment_root / "diffusion_gemma" / "outputs.jsonl",
-            diffusion_performance_path=(
-                experiment_root / "diffusion_gemma" / "performance.jsonl"
-            ),
             pairs_path=comparison_root / "pairs.jsonl",
-            source_summary_path=comparison_root / "source_summary.json",
         )
 
     print(f"Experiment {experiment_id}: {completed}")

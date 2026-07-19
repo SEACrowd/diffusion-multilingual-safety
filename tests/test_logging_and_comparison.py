@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from evaluation.paired_outputs import create_paired_outputs
+from logging_utils.diffusion_gemma.logits import DiffusionLogitsLogger
 from logging_utils.moe import route_change_rate, summarize_router_output
 from logging_utils.writer import read_jsonl, write_jsonl
 
@@ -72,7 +73,7 @@ class MoeSummaryTests(unittest.TestCase):
 
 
 class PairedOutputTests(unittest.TestCase):
-    def test_pairing_filters_diffusion_step_performance(self) -> None:
+    def test_pairing_uses_model_outputs_without_performance_streams(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             output = {
@@ -99,34 +100,52 @@ class PairedOutputTests(unittest.TestCase):
                 "input_token_count": 1,
                 "output_token_count": 1,
             }
-            performance = {
-                "event": "inference_performance",
-                "example_id": "example-1",
-                "total_latency_s": 1.0,
-                "tokens_per_second": 1.0,
-                "cuda_memory": [],
-                "instrumented": True,
-            }
             write_jsonl(root / "gemma-output.jsonl", [output])
-            write_jsonl(root / "gemma-performance.jsonl", [performance])
-            write_jsonl(root / "diffusion-output.jsonl", [output])
             write_jsonl(
-                root / "diffusion-performance.jsonl",
-                [{"event": "performance_step"}, performance],
+                root / "diffusion-output.jsonl",
+                [{**output, "model_id": "diffusion-model", "run_id": "diffusion-run"}],
             )
 
             count = create_paired_outputs(
                 gemma_outputs_path=root / "gemma-output.jsonl",
-                gemma_performance_path=root / "gemma-performance.jsonl",
                 diffusion_outputs_path=root / "diffusion-output.jsonl",
-                diffusion_performance_path=root / "diffusion-performance.jsonl",
                 pairs_path=root / "pairs.jsonl",
-                source_summary_path=root / "summary.json",
             )
 
             self.assertEqual(count, 1)
             pairs = list(read_jsonl(root / "pairs.jsonl"))
             self.assertEqual(pairs[0]["example_id"], "example-1")
+            self.assertEqual(pairs[0]["schema_version"], 2)
+            self.assertNotIn("total_latency_s", pairs[0]["gemma"])
+
+
+class DiffusionLogitsTests(unittest.TestCase):
+    def test_entropy_is_serialized_as_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            path = root / "logits.jsonl"
+            logger = DiffusionLogitsLogger(
+                path,
+                top_k=2,
+                save_full_logits=False,
+                full_logits_directory=root / "full-logits",
+            )
+            try:
+                logger.log_step(
+                    context={"run_id": "run", "canvas_index": 0, "step_index": 0},
+                    logits=torch.tensor([[[2.0, 1.0, 0.0], [0.0, 1.0, 2.0]]]),
+                    sampled_tokens=torch.tensor([[0, 2]]),
+                    sampled_probabilities=torch.tensor([[0.6, 0.7]]),
+                    accepted_mask=torch.tensor([[True, False]]),
+                )
+            finally:
+                logger.close()
+
+            records = list(read_jsonl(path))
+            entropy = records[0]["entropy_per_position"]
+            self.assertEqual(len(entropy), 2)
+            self.assertTrue(all(isinstance(value, float) for value in entropy))
+            self.assertTrue(all(value >= 0 for value in entropy))
 
 
 if __name__ == "__main__":

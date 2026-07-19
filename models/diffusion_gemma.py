@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -18,13 +17,6 @@ from logging_utils.diffusion_gemma.logits import DiffusionLogitsLogger
 from logging_utils.diffusion_gemma.router import DiffusionGemmaRouterTracer
 from logging_utils.diffusion_gemma.scheduler import TracingEntropyBoundScheduler
 from logging_utils.outcomes import OutputLogger
-from logging_utils.performance import (
-    PerformanceLogger,
-    cuda_peak_memory,
-    reset_cuda_peak_memory,
-    synchronize_cuda,
-    write_source_summary_from_jsonl,
-)
 
 from .common import (
     example_context,
@@ -91,7 +83,6 @@ def run_diffusion_gemma_inference(
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    performance = PerformanceLogger(root / "performance.jsonl")
     canvas = CanvasLogger(root / "canvas.jsonl", pipeline.processor)
     logits = (
         DiffusionLogitsLogger(
@@ -156,16 +147,11 @@ def run_diffusion_gemma_inference(
                 context=context,
                 canvas_logger=canvas,
                 logits_logger=logits,
-                performance_logger=performance,
                 router_tracer=router,
             )
 
             if router is not None:
                 router.begin_example(context)
-            reset_cuda_peak_memory()
-            synchronize_cuda()
-            started_at = time.perf_counter()
-            callback.start_timing()
             try:
                 output = pipeline(
                     prompt=prompt,
@@ -177,14 +163,12 @@ def run_diffusion_gemma_inference(
                     callback_on_step_end=callback,
                     callback_on_step_end_tensor_inputs=["canvas"],
                 )
-                synchronize_cuda()
                 if router is not None:
                     router.end_example()
             except BaseException:
                 if router is not None:
                     router.abort_example()
                 raise
-            total_latency = time.perf_counter() - started_at
 
             generated_token_ids = output.sequences[0].detach().cpu().tolist()
             outputs.log(
@@ -194,28 +178,15 @@ def run_diffusion_gemma_inference(
                 input_token_count=input_token_count,
                 rendered_prompt=rendered_prompt,
             )
-            performance.log_inference(
-                context=context,
-                total_latency=total_latency,
-                input_token_count=input_token_count,
-                output_token_count=len(generated_token_ids),
-                instrumented=True,
-                cuda_memory=cuda_peak_memory(),
-            )
             count += 1
     finally:
         outputs.close()
-        performance.close()
         canvas.close()
         if logits is not None:
             logits.close()
         if router is not None:
             router.close()
 
-    write_source_summary_from_jsonl(
-        root / "performance.jsonl",
-        root / "source_summary.json",
-    )
     return count
 
 

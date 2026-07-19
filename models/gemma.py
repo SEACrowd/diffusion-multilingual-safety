@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -15,13 +14,6 @@ from logging_utils.gemma.logits import GemmaLogitsLogger
 from logging_utils.gemma.router import GemmaRouterTracer
 from logging_utils.gemma.tokens import GemmaTokenLogger
 from logging_utils.outcomes import OutputLogger
-from logging_utils.performance import (
-    PerformanceLogger,
-    cuda_peak_memory,
-    reset_cuda_peak_memory,
-    synchronize_cuda,
-    write_source_summary_from_jsonl,
-)
 
 from .common import (
     example_context,
@@ -85,7 +77,6 @@ def run_gemma_inference(
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    performance = PerformanceLogger(root / "performance.jsonl")
     tokens = GemmaTokenLogger(root / "tokens.jsonl", processor)
     logits = (
         GemmaLogitsLogger(
@@ -160,16 +151,11 @@ def run_gemma_inference(
 
             if router is not None:
                 router.begin_example(context)
-            reset_cuda_peak_memory()
-            synchronize_cuda()
-            started_at = time.perf_counter()
             try:
                 generation_output = model.generate(**model_inputs, **generation_kwargs)
-                synchronize_cuda()
             finally:
                 if router is not None:
                     router.end_example()
-            total_latency = time.perf_counter() - started_at
 
             generated = generation_output.sequences[0, input_token_count:]
             generated_token_ids = generated.detach().cpu().tolist()
@@ -193,26 +179,13 @@ def run_gemma_inference(
                     scores=tuple(generation_output.scores),
                     generated_token_ids=generated_token_ids,
                 )
-            performance.log_inference(
-                context=context,
-                total_latency=total_latency,
-                input_token_count=input_token_count,
-                output_token_count=len(generated_token_ids),
-                instrumented=log_logits or log_moe,
-                cuda_memory=cuda_peak_memory(),
-            )
             count += 1
     finally:
         outputs.close()
-        performance.close()
         tokens.close()
         if logits is not None:
             logits.close()
         if router is not None:
             router.close()
 
-    write_source_summary_from_jsonl(
-        root / "performance.jsonl",
-        root / "source_summary.json",
-    )
     return count
