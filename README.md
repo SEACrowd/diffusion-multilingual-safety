@@ -83,6 +83,39 @@ Full vocabulary logits are disabled because their storage cost is extreme.
 Compact top-k, entropy, selected-token, and router-utilization summaries remain
 enabled.
 
+## Ten-example smoke test
+
+Run the real end-to-end pipeline on the first 10 matching dataset records:
+
+```powershell
+python smoke_test_pipeline.py
+```
+
+The smoke runner uses both real models, writes the normal telemetry, creates the
+paired comparison, and then checks the manifest, output counts, and core output
+files. It forces `DATASET_MAX_SAMPLES = 10`, disables dataset shuffling, and
+removes `INFERENCE_MAX_BATCHES` for that invocation so all 10 records are
+processed regardless of batch size. It does not modify `config.py`.
+
+Useful overrides:
+
+```powershell
+# Try only two records with Gemma first
+python smoke_test_pipeline.py --samples 2 --models gemma
+
+# Run both models on 10 records under a recognizable ID
+python smoke_test_pipeline.py --experiment-id smoke-manual-10
+```
+
+This is a real model run, not a mocked unit test, so it still downloads/loads the
+configured 26B checkpoints and needs the hardware described above.
+
+`config.py` is intentionally a Python file because `config_parser.py` imports it
+as a module (`import config`). Python import statements omit the `.py` suffix,
+but the file itself needs it. A data-only configuration would instead use a file
+such as `config.toml` or `config.yaml` plus corresponding loading code; an
+extensionless `config` file would not work with the current loader.
+
 ## Experiment Data
 
 Each invocation resolves the dataset and model revisions to exact Hub commit
