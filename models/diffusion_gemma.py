@@ -188,6 +188,10 @@ def run_diffusion_gemma_inference(
                 raise
 
             generated = output.sequences[0].detach().cpu()
+            # ponytail: strip prompt only if pipeline returned prompt+canvas; gen region
+            # is exactly gen_length, so a longer sequence means the prompt is prepended.
+            if generated.shape[0] > gen_length:
+                generated = generated[input_token_count:]
             generated_token_ids = generated.tolist()
             response_errors: list[str] = []
             try:

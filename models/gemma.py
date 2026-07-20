@@ -155,7 +155,7 @@ def run_gemma_inference(
                 "max_new_tokens": max_new_tokens,
                 "do_sample": do_sample,
                 "return_dict_in_generate": True,
-                "output_scores": logits is not None,
+                "output_logits": logits is not None,
             }
             if do_sample:
                 generation_kwargs.update(
@@ -219,7 +219,8 @@ def run_gemma_inference(
                     "Gemma logits",
                     lambda: logits.log_generation(
                         context=context,
-                        scores=tuple(generation_output.scores),
+                        # raw model logits (output_logits), not warper-processed .scores
+                        scores=tuple(generation_output.logits),
                         generated_token_ids=generated_token_ids,
                     ),
                 ):
