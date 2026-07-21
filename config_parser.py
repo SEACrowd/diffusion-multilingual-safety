@@ -22,7 +22,6 @@ class ModelConfig(BaseModel):
 
 class GemmaGenerationConfig(BaseModel):
     max_new_tokens: int = Field(gt=0)
-    enable_thinking: bool
     do_sample: bool
     temperature: float = Field(gt=0)
     top_p: float = Field(gt=0, le=1)
@@ -37,6 +36,20 @@ class DiffusionGemmaGenerationConfig(BaseModel):
     entropy_bound: float = Field(gt=0)
     stability_threshold: int = Field(gt=0)
     confidence_threshold: float | None = Field(default=None, gt=0)
+
+
+ThinkingVariant = Literal["non_thinking", "thinking"]
+THINKING_VARIANT_VALUES: dict[str, ThinkingVariant] = {
+    "non_thinking": "non_thinking",
+    "non-thinking": "non_thinking",
+    "false": "non_thinking",
+    "0": "non_thinking",
+    "off": "non_thinking",
+    "thinking": "thinking",
+    "true": "thinking",
+    "1": "thinking",
+    "on": "thinking",
+}
 
 
 class LoggingConfig(BaseModel):
@@ -57,6 +70,7 @@ class DataLoaderConfig(BaseModel):
 
 class AppConfig(BaseModel):
     models_to_run: tuple[Literal["gemma", "diffusion_gemma"], ...]
+    thinking_variants: tuple[ThinkingVariant, ...]
     inference_max_batches: int | None = Field(default=None, gt=0)
     gemma_model: ModelConfig
     diffusion_gemma_model: ModelConfig
@@ -72,9 +86,15 @@ def parse_app_config(environ: Mapping[str, str] | None = None) -> AppConfig:
     models_to_run = parse_list(env, "MODELS_TO_RUN", config.MODELS_TO_RUN)
     if not models_to_run:
         raise ValueError("MODELS_TO_RUN must contain at least one model")
+    thinking_variants = parse_thinking_variants(
+        env,
+        "THINKING_VARIANTS",
+        config.THINKING_VARIANTS,
+    )
 
     return AppConfig(
         models_to_run=tuple(dict.fromkeys(models_to_run)),
+        thinking_variants=thinking_variants,
         inference_max_batches=parse_optional_int(
             env,
             "INFERENCE_MAX_BATCHES",
@@ -88,11 +108,6 @@ def parse_app_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         ),
         gemma_generation=GemmaGenerationConfig(
             max_new_tokens=parse_int(env, "GEMMA_MAX_NEW_TOKENS", config.GEMMA_MAX_NEW_TOKENS),
-            enable_thinking=parse_bool(
-                env,
-                "GEMMA_ENABLE_THINKING",
-                config.GEMMA_ENABLE_THINKING,
-            ),
             do_sample=parse_bool(env, "GEMMA_DO_SAMPLE", config.GEMMA_DO_SAMPLE),
             temperature=parse_float(env, "GEMMA_TEMPERATURE", config.GEMMA_TEMPERATURE),
             top_p=parse_float(env, "GEMMA_TOP_P", config.GEMMA_TOP_P),
@@ -281,6 +296,31 @@ def parse_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "n", "off"}:
         return False
     raise ValueError(f"{name} must be a boolean, got {value!r}")
+
+
+def parse_thinking_variants(
+    env: Mapping[str, str],
+    name: str,
+    default: list[str] | tuple[str, ...] | None = None,
+) -> tuple[ThinkingVariant, ...]:
+    raw_items = parse_list(env, name, default)
+    if not raw_items:
+        raise ValueError(f"{name} must contain at least one thinking variant")
+    variants: list[ThinkingVariant] = []
+    for item in raw_items:
+        normalized = THINKING_VARIANT_VALUES.get(item.lower())
+        if normalized is None:
+            allowed = ", ".join(sorted(set(THINKING_VARIANT_VALUES)))
+            raise ValueError(
+                f"{name} entries must be one of {{{allowed}}}, got {item!r}"
+            )
+        if normalized not in variants:
+            variants.append(normalized)
+    return tuple(variants)
+
+
+def thinking_enabled(variant: ThinkingVariant) -> bool:
+    return variant == "thinking"
 
 
 def parse_list(

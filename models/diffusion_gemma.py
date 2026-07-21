@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
 import torch
@@ -63,6 +64,22 @@ def create_diffusion_gemma_pipeline(
     return DiffusionGemmaPipeline(model=model, scheduler=scheduler, processor=processor)
 
 
+@contextmanager
+def force_chat_template_thinking(processor: Any, enable_thinking: bool) -> Iterator[None]:
+    """Diffusers' pipeline encode path omits enable_thinking; inject it here."""
+    original = processor.apply_chat_template
+
+    def apply_chat_template(*args: Any, **kwargs: Any) -> Any:
+        kwargs["enable_thinking"] = enable_thinking
+        return original(*args, **kwargs)
+
+    processor.apply_chat_template = apply_chat_template
+    try:
+        yield
+    finally:
+        processor.apply_chat_template = original
+
+
 @torch.inference_mode()
 def run_diffusion_gemma_inference(
     pipeline: DiffusionGemmaPipeline,
@@ -78,6 +95,7 @@ def run_diffusion_gemma_inference(
     num_inference_steps: int,
     stability_threshold: int,
     confidence_threshold: float | None,
+    enable_thinking: bool,
     log_top_k: int,
     log_logits: bool,
     log_moe: bool,
@@ -126,6 +144,7 @@ def run_diffusion_gemma_inference(
         "num_inference_steps": num_inference_steps,
         "stability_threshold": stability_threshold,
         "confidence_threshold": confidence_threshold,
+        "enable_thinking": enable_thinking,
         "scheduler": sampler_configuration,
     }
     count = 0
@@ -142,6 +161,7 @@ def run_diffusion_gemma_inference(
                 run_id=run_id,
                 metadata=metadata,
                 seed=current_seed,
+                enable_thinking=enable_thinking,
             )
             output_context = {
                 **context,
@@ -153,6 +173,7 @@ def run_diffusion_gemma_inference(
                 [{"role": "user", "content": prompt}],
                 tokenize=False,
                 add_generation_prompt=True,
+                enable_thinking=enable_thinking,
             )
             encoded_prompt = pipeline.processor(text=rendered_prompt, return_tensors="pt")
             input_token_count = int(encoded_prompt["input_ids"].shape[-1])
@@ -170,16 +191,17 @@ def run_diffusion_gemma_inference(
             if router is not None:
                 router.begin_example(context)
             try:
-                output = pipeline(
-                    prompt=prompt,
-                    gen_length=gen_length,
-                    num_inference_steps=num_inference_steps,
-                    stability_threshold=stability_threshold,
-                    confidence_threshold=confidence_threshold,
-                    generator=generator,
-                    callback_on_step_end=callback,
-                    callback_on_step_end_tensor_inputs=["canvas"],
-                )
+                with force_chat_template_thinking(pipeline.processor, enable_thinking):
+                    output = pipeline(
+                        prompt=prompt,
+                        gen_length=gen_length,
+                        num_inference_steps=num_inference_steps,
+                        stability_threshold=stability_threshold,
+                        confidence_threshold=confidence_threshold,
+                        generator=generator,
+                        callback_on_step_end=callback,
+                        callback_on_step_end_tensor_inputs=["canvas"],
+                    )
                 if router is not None:
                     router.end_example()
             except BaseException:
@@ -238,7 +260,8 @@ def run_diffusion_gemma_inference(
             best_effort(
                 "DiffusionGemma response display",
                 lambda: print(
-                    f"[diffusion_gemma] response for {metadata['id']}:\n"
+                    f"[diffusion_gemma{'/thinking' if enable_thinking else '/non_thinking'}] "
+                    f"response for {metadata['id']}:\n"
                     f"{final_text or '[decoding failed; token IDs saved]'}\n",
                     flush=True,
                 ),

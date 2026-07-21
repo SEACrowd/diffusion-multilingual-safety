@@ -136,6 +136,7 @@ def run_gemma_inference(
                 run_id=run_id,
                 metadata=metadata,
                 seed=current_seed,
+                enable_thinking=enable_thinking,
             )
             output_context = {
                 **context,
@@ -203,7 +204,8 @@ def run_gemma_inference(
             best_effort(
                 "Gemma response display",
                 lambda: print(
-                    f"[gemma] response for {metadata['id']}:\n"
+                    f"[gemma{'/thinking' if enable_thinking else '/non_thinking'}] "
+                    f"response for {metadata['id']}:\n"
                     f"{final_text or '[decoding failed; token IDs saved]'}\n",
                     flush=True,
                 ),

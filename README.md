@@ -90,6 +90,7 @@ Important defaults:
 
 ```python
 MODELS_TO_RUN = ["gemma", "diffusion_gemma"]
+THINKING_VARIANTS = ["non_thinking", "thinking"]
 INFERENCE_MAX_BATCHES = 1
 LOG_MOE = True
 LOG_LOGITS = True
@@ -146,16 +147,32 @@ logging/<experiment_id>/
   dataset.json
   inputs.jsonl
   gemma/
-    outputs.jsonl
-    tokens.jsonl
-    logits.jsonl
-    moe.jsonl
+    non_thinking/
+      outputs.jsonl
+      tokens.jsonl
+      logits.jsonl
+      moe.jsonl
+    thinking/
+      outputs.jsonl
+      tokens.jsonl
+      logits.jsonl
+      moe.jsonl
   diffusion_gemma/
-    outputs.jsonl
-    canvas.jsonl
-    logits.jsonl
-    moe.jsonl
+    non_thinking/
+      outputs.jsonl
+      canvas.jsonl
+      logits.jsonl
+      moe.jsonl
+    thinking/
+      outputs.jsonl
+      canvas.jsonl
+      logits.jsonl
+      moe.jsonl
 ```
+
+By default both `non_thinking` and `thinking` chat-template variants run for every
+selected model (`THINKING_VARIANTS`). Override with e.g.
+`THINKING_VARIANTS=non_thinking` or `THINKING_VARIANTS=thinking`.
 
 `outputs.jsonl` is the primary result. It contains one JSON object per completed
 dataset ID. The clean answer is in `response` (and the compatibility alias

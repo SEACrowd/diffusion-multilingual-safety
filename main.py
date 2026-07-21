@@ -19,7 +19,7 @@ import transformers
 from dotenv import load_dotenv
 from huggingface_hub import HfApi
 
-from config_parser import AppConfig, parse_app_config
+from config_parser import AppConfig, parse_app_config, thinking_enabled
 from dataloader import create_manifest_dataloader, materialize_input_manifest
 from logging_utils.writer import write_json
 from models.diffusion_gemma import (
@@ -132,30 +132,28 @@ def main(config: AppConfig) -> dict[str, int]:
     completed: dict[str, int] = {}
     failures: dict[str, dict[str, str]] = {}
     for model_kind in config.models_to_run:
-        dataloader = create_manifest_dataloader(
-            inputs_path,
-            batch_size=config.dataloader.batch_size,
-            num_workers=config.dataloader.num_workers,
-            pin_memory=config.dataloader.pin_memory,
-        )
         try:
             if model_kind == "gemma":
-                completed[model_kind] = run_gemma(
-                    config,
-                    dataloader,
-                    experiment_id,
-                    experiment_root,
-                    model_revisions[model_kind],
-                    hf_token,
+                completed.update(
+                    run_gemma(
+                        config,
+                        inputs_path,
+                        experiment_id,
+                        experiment_root,
+                        model_revisions[model_kind],
+                        hf_token,
+                    )
                 )
             elif model_kind == "diffusion_gemma":
-                completed[model_kind] = run_diffusion_gemma(
-                    config,
-                    dataloader,
-                    experiment_id,
-                    experiment_root,
-                    model_revisions[model_kind],
-                    hf_token,
+                completed.update(
+                    run_diffusion_gemma(
+                        config,
+                        inputs_path,
+                        experiment_id,
+                        experiment_root,
+                        model_revisions[model_kind],
+                        hf_token,
+                    )
                 )
         except Exception as error:
             error_record = {
@@ -185,12 +183,12 @@ def main(config: AppConfig) -> dict[str, int]:
 
 def run_gemma(
     config: AppConfig,
-    dataloader,
+    inputs_path: Path,
     experiment_id: str,
     experiment_root: Path,
     revision: str,
     token: str | None,
-) -> int:
+) -> dict[str, int]:
     model, processor = create_gemma_model(
         model_name=config.gemma_model.model_name,
         processor_name=config.gemma_model.processor_name,
@@ -199,41 +197,52 @@ def run_gemma(
         device_map=config.gemma_model.device_map,
         token=token,
     )
+    completed: dict[str, int] = {}
     try:
-        return run_gemma_inference(
-            model,
-            processor,
-            dataloader,
-            experiment_id=experiment_id,
-            model_id=config.gemma_model.model_name,
-            model_revision=revision,
-            logging_root=experiment_root / "gemma",
-            max_batches=config.inference_max_batches,
-            seed=config.logging.seed,
-            max_new_tokens=config.gemma_generation.max_new_tokens,
-            enable_thinking=config.gemma_generation.enable_thinking,
-            do_sample=config.gemma_generation.do_sample,
-            temperature=config.gemma_generation.temperature,
-            top_p=config.gemma_generation.top_p,
-            top_k=config.gemma_generation.top_k,
-            log_top_k=config.logging.top_k,
-            log_logits=config.logging.log_logits,
-            log_moe=config.logging.log_moe,
-            save_full_logits=config.logging.save_full_logits,
-        )
+        for variant in config.thinking_variants:
+            enable_thinking = thinking_enabled(variant)
+            run_key = f"gemma/{variant}"
+            dataloader = create_manifest_dataloader(
+                inputs_path,
+                batch_size=config.dataloader.batch_size,
+                num_workers=config.dataloader.num_workers,
+                pin_memory=config.dataloader.pin_memory,
+            )
+            completed[run_key] = run_gemma_inference(
+                model,
+                processor,
+                dataloader,
+                experiment_id=experiment_id,
+                model_id=config.gemma_model.model_name,
+                model_revision=revision,
+                logging_root=experiment_root / "gemma" / variant,
+                max_batches=config.inference_max_batches,
+                seed=config.logging.seed,
+                max_new_tokens=config.gemma_generation.max_new_tokens,
+                enable_thinking=enable_thinking,
+                do_sample=config.gemma_generation.do_sample,
+                temperature=config.gemma_generation.temperature,
+                top_p=config.gemma_generation.top_p,
+                top_k=config.gemma_generation.top_k,
+                log_top_k=config.logging.top_k,
+                log_logits=config.logging.log_logits,
+                log_moe=config.logging.log_moe,
+                save_full_logits=config.logging.save_full_logits,
+            )
     finally:
         del model
         del processor
+    return completed
 
 
 def run_diffusion_gemma(
     config: AppConfig,
-    dataloader,
+    inputs_path: Path,
     experiment_id: str,
     experiment_root: Path,
     revision: str,
     token: str | None,
-) -> int:
+) -> dict[str, int]:
     pipeline = create_diffusion_gemma_pipeline(
         model_name=config.diffusion_gemma_model.model_name,
         processor_name=config.diffusion_gemma_model.processor_name,
@@ -245,33 +254,45 @@ def run_diffusion_gemma(
         t_min=config.diffusion_gemma_generation.t_min,
         token=token,
     )
+    completed: dict[str, int] = {}
     try:
-        return run_diffusion_gemma_inference(
-            pipeline,
-            dataloader,
-            experiment_id=experiment_id,
-            model_id=config.diffusion_gemma_model.model_name,
-            model_revision=revision,
-            logging_root=experiment_root / "diffusion_gemma",
-            max_batches=config.inference_max_batches,
-            seed=config.logging.seed,
-            gen_length=config.diffusion_gemma_generation.gen_length,
-            num_inference_steps=(
-                config.diffusion_gemma_generation.max_denoising_steps
-            ),
-            stability_threshold=(
-                config.diffusion_gemma_generation.stability_threshold
-            ),
-            confidence_threshold=(
-                config.diffusion_gemma_generation.confidence_threshold
-            ),
-            log_top_k=config.logging.top_k,
-            log_logits=config.logging.log_logits,
-            log_moe=config.logging.log_moe,
-            save_full_logits=config.logging.save_full_logits,
-        )
+        for variant in config.thinking_variants:
+            enable_thinking = thinking_enabled(variant)
+            run_key = f"diffusion_gemma/{variant}"
+            dataloader = create_manifest_dataloader(
+                inputs_path,
+                batch_size=config.dataloader.batch_size,
+                num_workers=config.dataloader.num_workers,
+                pin_memory=config.dataloader.pin_memory,
+            )
+            completed[run_key] = run_diffusion_gemma_inference(
+                pipeline,
+                dataloader,
+                experiment_id=experiment_id,
+                model_id=config.diffusion_gemma_model.model_name,
+                model_revision=revision,
+                logging_root=experiment_root / "diffusion_gemma" / variant,
+                max_batches=config.inference_max_batches,
+                seed=config.logging.seed,
+                gen_length=config.diffusion_gemma_generation.gen_length,
+                num_inference_steps=(
+                    config.diffusion_gemma_generation.max_denoising_steps
+                ),
+                stability_threshold=(
+                    config.diffusion_gemma_generation.stability_threshold
+                ),
+                confidence_threshold=(
+                    config.diffusion_gemma_generation.confidence_threshold
+                ),
+                enable_thinking=enable_thinking,
+                log_top_k=config.logging.top_k,
+                log_logits=config.logging.log_logits,
+                log_moe=config.logging.log_moe,
+                save_full_logits=config.logging.save_full_logits,
+            )
     finally:
         del pipeline
+    return completed
 
 
 def resolve_model_revisions(config: AppConfig, token: str | None) -> dict[str, str]:

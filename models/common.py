@@ -45,6 +45,7 @@ def example_context(
     run_id: str,
     metadata: dict[str, Any],
     seed: int,
+    enable_thinking: bool,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -63,6 +64,7 @@ def example_context(
         "violated_categories": metadata.get("violated_categories", ""),
         "tag": metadata.get("tag", ""),
         "seed": seed,
+        "enable_thinking": enable_thinking,
     }
 
 

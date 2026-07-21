@@ -27,9 +27,16 @@ class ConfigurationAndDataTests(unittest.TestCase):
         assert parse_app_config is not None
         parsed = parse_app_config({"UNRELATED": "value"})
         self.assertEqual(parsed.models_to_run, ("gemma", "diffusion_gemma"))
+        self.assertEqual(parsed.thinking_variants, ("non_thinking", "thinking"))
         self.assertEqual(parsed.dataloader.batch_size, 1)
         self.assertTrue(parsed.logging.log_logits)
         self.assertTrue(parsed.logging.log_moe)
+
+    @unittest.skipIf(parse_app_config is None, "project dependencies are not installed")
+    def test_thinking_variants_can_select_one_mode(self) -> None:
+        assert parse_app_config is not None
+        parsed = parse_app_config({"THINKING_VARIANTS": "thinking"})
+        self.assertEqual(parsed.thinking_variants, ("thinking",))
 
     @unittest.skipIf(
         collate_multilingual_safety_batch is None,

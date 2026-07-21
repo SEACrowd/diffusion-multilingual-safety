@@ -22,6 +22,7 @@ class SmokePipelineConfigurationTests(unittest.TestCase):
         self.assertFalse(config.data.shuffle)
         self.assertIsNone(config.inference_max_batches)
         self.assertEqual(config.models_to_run, ("gemma", "diffusion_gemma"))
+        self.assertEqual(config.thinking_variants, ("non_thinking", "thinking"))
         self.assertEqual(config.logging.experiment_id, "smoke-test")
 
     @unittest.skipIf(build_smoke_config is None, "project dependencies are not installed")

@@ -131,7 +131,11 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
             f"Expected {expected_count} manifest examples, but found {actual_inputs}"
         )
 
-    expected_counts = {model: expected_count for model in config.models_to_run}
+    expected_counts = {
+        f"{model}/{variant}": expected_count
+        for model in config.models_to_run
+        for variant in config.thinking_variants
+    }
     mismatches = {
         name: {"expected": expected, "actual": completed.get(name)}
         for name, expected in expected_counts.items()
@@ -146,11 +150,8 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
         experiment_root / "inputs.jsonl",
     ]
     for model in config.models_to_run:
-        required_paths.extend(
-            [
-                experiment_root / model / "outputs.jsonl",
-            ]
-        )
+        for variant in config.thinking_variants:
+            required_paths.append(experiment_root / model / variant / "outputs.jsonl")
     missing_paths = [str(path) for path in required_paths if not path.is_file()]
     if missing_paths:
         raise RuntimeError(f"Missing pipeline artifacts: {missing_paths}")
@@ -172,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Starting pipeline smoke test: "
         f"samples={config.data.max_samples}, "
         f"models={','.join(config.models_to_run)}, "
+        f"thinking_variants={','.join(config.thinking_variants)}, "
         f"experiment_id={config.logging.experiment_id}"
     )
     # Import lazily so `--help` and configuration tests do not load model stacks.
