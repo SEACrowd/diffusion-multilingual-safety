@@ -10,10 +10,10 @@ import torch
 from torch.utils.data import DataLoader
 
 
-def iter_examples(
+def iter_batches(
     dataloader: DataLoader,
     max_batches: int | None,
-) -> Iterator[tuple[str, dict[str, Any], str]]:
+) -> Iterator[tuple[list[str], list[dict[str, Any]], list[str]]]:
     for batch_index, batch in enumerate(dataloader):
         if max_batches is not None and batch_index >= max_batches:
             break
@@ -22,7 +22,112 @@ def iter_examples(
         references = batch.get("reference_responses")
         if not prompts or metadata_rows is None or references is None:
             raise ValueError("Dataloader batch is missing prompts, metadata, or references")
+        yield list(prompts), list(metadata_rows), list(references)
+
+
+def iter_examples(
+    dataloader: DataLoader,
+    max_batches: int | None,
+) -> Iterator[tuple[str, dict[str, Any], str]]:
+    for prompts, metadata_rows, references in iter_batches(dataloader, max_batches):
         yield from zip(prompts, metadata_rows, references, strict=True)
+
+
+def batch_seed(base_seed: int, example_ids: list[str]) -> int:
+    return example_seed(base_seed, "|".join(example_ids))
+
+
+def ensure_left_padding(processor: Any) -> None:
+    tokenizer = getattr(processor, "tokenizer", processor)
+    if getattr(tokenizer, "pad_token_id", None) is None:
+        eos_token = getattr(tokenizer, "eos_token", None)
+        if eos_token is None:
+            raise ValueError("Tokenizer needs a pad_token or eos_token for batched generation")
+        tokenizer.pad_token = eos_token
+    tokenizer.padding_side = "left"
+    if hasattr(processor, "padding_side"):
+        processor.padding_side = "left"
+
+
+def trim_at_eos(token_ids: list[int], eos_token_id: int | None) -> list[int]:
+    if eos_token_id is None:
+        return token_ids
+    try:
+        end = token_ids.index(eos_token_id) + 1
+    except ValueError:
+        return token_ids
+    return token_ids[:end]
+
+
+def resolve_response_boundary_token_ids(
+    processor: Any,
+) -> tuple[int | None, int | None, int | None]:
+    """Return ``(eos_token_id, pad_token_id, turn_end_token_id)``."""
+    tokenizer = getattr(processor, "tokenizer", processor)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    turn_end_token_id: int | None = None
+    convert = getattr(tokenizer, "convert_tokens_to_ids", None)
+    if callable(convert):
+        candidate = convert("<turn|>")
+        unk_token_id = getattr(tokenizer, "unk_token_id", None)
+        if isinstance(candidate, int) and candidate != unk_token_id:
+            turn_end_token_id = candidate
+    if turn_end_token_id is None:
+        turn_end_token_id = 106
+    if pad_token_id is None:
+        pad_token_id = 0
+    return eos_token_id, pad_token_id, turn_end_token_id
+
+
+def sanitize_generated_token_ids(
+    token_ids: list[int],
+    *,
+    eos_token_id: int | None = None,
+    pad_token_id: int | None = 0,
+    turn_end_token_id: int | None = 106,
+) -> list[int]:
+    """Cut at EOS / ``<turn|>``, then drop pad and turn-end tokens.
+
+    Batched decoding often continues with ``<pad>`` after the real response, and
+    Gemma ends assistant turns with ``<turn|>`` instead of ``<eos>``.
+    """
+    stop_ids = {
+        token_id
+        for token_id in (eos_token_id, turn_end_token_id)
+        if token_id is not None
+    }
+    end = len(token_ids)
+    for index, token_id in enumerate(token_ids):
+        if token_id not in stop_ids:
+            continue
+        # Keep EOS in the kept span; drop ``<turn|>`` by cutting before it.
+        end = index + 1 if token_id == eos_token_id else index
+        break
+
+    drop_ids = {
+        token_id
+        for token_id in (pad_token_id, turn_end_token_id)
+        if token_id is not None
+    }
+    return [token_id for token_id in token_ids[:end] if token_id not in drop_ids]
+
+
+def strip_response_marker_text(text: str) -> str:
+    cleaned = text
+    for marker in ("<pad>", "<turn|>"):
+        cleaned = cleaned.replace(marker, "")
+    return cleaned.rstrip()
+
+
+def model_primary_device(model: Any) -> torch.device:
+    device = getattr(model, "device", None)
+    if isinstance(device, torch.device):
+        return device
+    try:
+        return next(model.parameters()).device
+    except StopIteration as exc:
+        raise RuntimeError("Model has no parameters to resolve a device from") from exc
 
 
 def example_seed(base_seed: int, example_id: str) -> int:

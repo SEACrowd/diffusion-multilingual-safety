@@ -118,9 +118,13 @@ def materialize_input_manifest(
             if not example_id:
                 raise ValueError(f"Dataset row {row_index} has an empty id")
             if example_id in seen_ids:
-                raise ValueError(f"Dataset contains duplicate id {example_id!r}")
+                # raise ValueError(f"Dataset contains duplicate id {example_id!r}")
+                print(f"Dataset contains duplicate id {example_id!r}")
+                continue
             if not prompt:
-                raise ValueError(f"Dataset row {example_id!r} has an empty prompt")
+                # raise ValueError(f"Dataset row {example_id!r} has an empty prompt")
+                print(f"Dataset row {example_id!r} has an empty prompt")
+                continue
             seen_ids.add(example_id)
             yield {
                 **example,

@@ -1,4 +1,4 @@
-"""Stateless Gemma 4 construction and autoregressive inference."""
+"""Stateless Gemma 4 construction and inference."""
 
 from __future__ import annotations
 
@@ -18,13 +18,19 @@ from logging_utils.outcomes import OutputLogger
 from logging_utils.safety import best_effort, close_optional, create_optional
 
 from .common import (
+    batch_seed,
+    ensure_left_padding,
     example_context,
     example_seed,
-    iter_examples,
+    iter_batches,
+    model_primary_device,
     parse_response_text,
     resolve_dtype,
+    resolve_response_boundary_token_ids,
+    sanitize_generated_token_ids,
     seed_torch,
     selected_expert_count,
+    strip_response_marker_text,
 )
 
 
@@ -42,6 +48,7 @@ def create_gemma_model(
         revision=revision,
         token=token,
     )
+    ensure_left_padding(processor)
     model_kwargs: dict[str, Any] = {
         "revision": revision,
         "dtype": resolve_dtype(dtype),
@@ -122,36 +129,65 @@ def run_gemma_inference(
         "top_p": top_p if do_sample else None,
         "top_k": top_k if do_sample else None,
     }
+    device = model_primary_device(model)
+    eos_token_id, pad_token_id, turn_end_token_id = resolve_response_boundary_token_ids(
+        processor
+    )
+    ensure_left_padding(processor)
     count = 0
+    moe_batch_warned = False
     try:
-        for prompt, metadata, reference in iter_examples(dataloader, max_batches):
-            run_id = uuid4().hex
-            current_seed = example_seed(seed, str(metadata["id"]))
-            seed_torch(current_seed)
-            context = example_context(
-                experiment_id=experiment_id,
-                model_kind="gemma",
-                model_id=model_id,
-                model_revision=model_revision,
-                run_id=run_id,
-                metadata=metadata,
-                seed=current_seed,
-                enable_thinking=enable_thinking,
-            )
-            output_context = {
-                **context,
-                "prompt": prompt,
-                "reference_response": reference,
-                "generation_configuration": generation_configuration,
-            }
-            rendered_prompt = processor.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=enable_thinking,
-            )
-            model_inputs = processor(text=rendered_prompt, return_tensors="pt").to(model.device)
-            input_token_count = int(model_inputs["input_ids"].shape[-1])
+        for prompts, metadata_rows, references in iter_batches(dataloader, max_batches):
+            batch_size = len(prompts)
+            example_ids = [str(metadata["id"]) for metadata in metadata_rows]
+            current_batch_seed = batch_seed(seed, example_ids)
+            seed_torch(current_batch_seed)
+
+            contexts: list[dict[str, Any]] = []
+            output_contexts: list[dict[str, Any]] = []
+            for prompt, metadata, reference in zip(
+                prompts, metadata_rows, references, strict=True
+            ):
+                run_id = uuid4().hex
+                current_seed = example_seed(seed, str(metadata["id"]))
+                context = example_context(
+                    experiment_id=experiment_id,
+                    model_kind="gemma",
+                    model_id=model_id,
+                    model_revision=model_revision,
+                    run_id=run_id,
+                    metadata=metadata,
+                    seed=current_seed,
+                    enable_thinking=enable_thinking,
+                )
+                contexts.append(context)
+                output_contexts.append(
+                    {
+                        **context,
+                        "prompt": prompt,
+                        "reference_response": reference,
+                        "generation_configuration": generation_configuration,
+                        "batch_size": batch_size,
+                        "batch_seed": current_batch_seed,
+                    }
+                )
+
+            rendered_prompts = [
+                processor.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=enable_thinking,
+                )
+                for prompt in prompts
+            ]
+            model_inputs = processor(
+                text=rendered_prompts,
+                return_tensors="pt",
+                padding=True,
+            ).to(device)
+            input_token_counts = model_inputs["attention_mask"].sum(dim=1).tolist()
+            padded_prompt_length = int(model_inputs["input_ids"].shape[-1])
             generation_kwargs: dict[str, Any] = {
                 "max_new_tokens": max_new_tokens,
                 "do_sample": do_sample,
@@ -165,70 +201,104 @@ def run_gemma_inference(
                     top_k=top_k,
                 )
 
-            if router is not None:
-                router.begin_example(context)
-            try:
-                generation_output = model.generate(**model_inputs, **generation_kwargs)
-            finally:
-                if router is not None:
-                    router.end_example()
-
-            generated = generation_output.sequences[0, input_token_count:]
-            generated_token_ids = generated.detach().cpu().tolist()
-            response_error = None
-            try:
-                raw_text = processor.decode(
-                    generated,
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False,
-                )
-                final_text = parse_response_text(processor, raw_text)
-            except Exception as error:
-                raw_text = None
-                final_text = ""
-                response_error = f"{type(error).__name__}: {error}"
+            use_router = router is not None and batch_size == 1
+            if router is not None and batch_size > 1 and not moe_batch_warned:
                 warnings.warn(
-                    "Gemma response decoding failed; generated token IDs were preserved",
+                    "Gemma MoE telemetry is skipped for batch_size > 1",
                     RuntimeWarning,
                     stacklevel=2,
                 )
-            outputs.log(
-                context=output_context,
-                final_text=final_text,
-                final_token_ids=generated_token_ids,
-                input_token_count=input_token_count,
-                rendered_prompt=rendered_prompt,
-                raw_response=raw_text,
-                response_error=response_error,
+                moe_batch_warned = True
+            if use_router:
+                router.begin_example(contexts[0])
+            try:
+                generation_output = model.generate(**model_inputs, **generation_kwargs)
+            finally:
+                if use_router:
+                    router.end_example()
+
+            generated_batch = generation_output.sequences[:, padded_prompt_length:]
+            score_steps = (
+                tuple(generation_output.logits)
+                if logits is not None and getattr(generation_output, "logits", None)
+                else None
             )
-            best_effort(
-                "Gemma response display",
-                lambda: print(
-                    f"[gemma{'/thinking' if enable_thinking else '/non_thinking'}] "
-                    f"response for {metadata['id']}:\n"
-                    f"{final_text or '[decoding failed; token IDs saved]'}\n",
-                    flush=True,
-                ),
-            )
-            if tokens is not None and not best_effort(
-                "Gemma token",
-                lambda: tokens.log_generation(context, generated_token_ids),
+            for index, (context, output_context, rendered_prompt) in enumerate(
+                zip(contexts, output_contexts, rendered_prompts, strict=True)
             ):
-                close_optional("Gemma token", tokens)
-                tokens = None
-            if logits is not None:
-                if not best_effort(
-                    "Gemma logits",
-                    lambda: logits.log_generation(
-                        context=context,
-                        # raw model logits (output_logits), not warper-processed .scores
-                        scores=tuple(generation_output.logits),
-                        generated_token_ids=generated_token_ids,
+                generated_token_ids = sanitize_generated_token_ids(
+                    generated_batch[index].detach().cpu().tolist(),
+                    eos_token_id=eos_token_id,
+                    pad_token_id=pad_token_id,
+                    turn_end_token_id=turn_end_token_id,
+                )
+                response_error = None
+                try:
+                    raw_text = strip_response_marker_text(
+                        processor.decode(
+                            generated_token_ids,
+                            skip_special_tokens=False,
+                            clean_up_tokenization_spaces=False,
+                        )
+                    )
+                    final_text = strip_response_marker_text(
+                        parse_response_text(processor, raw_text)
+                    )
+                except Exception as error:
+                    raw_text = None
+                    final_text = ""
+                    response_error = f"{type(error).__name__}: {error}"
+                    warnings.warn(
+                        "Gemma response decoding failed; generated token IDs were preserved",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                outputs.log(
+                    context=output_context,
+                    final_text=final_text,
+                    final_token_ids=generated_token_ids,
+                    input_token_count=int(input_token_counts[index]),
+                    rendered_prompt=rendered_prompt,
+                    raw_response=raw_text,
+                    response_error=response_error,
+                )
+                best_effort(
+                    "Gemma response display",
+                    lambda context=context, final_text=final_text: print(
+                        f"[gemma{'/thinking' if enable_thinking else '/non_thinking'}] "
+                        f"response for {context['example_id']}:\n"
+                        f"{final_text or '[decoding failed; token IDs saved]'}\n",
+                        flush=True,
+                    ),
+                )
+                if tokens is not None and not best_effort(
+                    "Gemma token",
+                    lambda context=context, generated_token_ids=generated_token_ids: (
+                        tokens.log_generation(context, generated_token_ids)
                     ),
                 ):
-                    close_optional("Gemma logits", logits)
-                    logits = None
-            count += 1
+                    close_optional("Gemma token", tokens)
+                    tokens = None
+                if logits is not None and score_steps is not None:
+                    example_scores = tuple(
+                        step_scores[index : index + 1] for step_scores in score_steps
+                    )
+                    # Batched generate keeps logits for the full padded generation
+                    # length; trim to this example's decoded token count.
+                    example_scores = example_scores[: len(generated_token_ids)]
+                    if not best_effort(
+                        "Gemma logits",
+                        lambda context=context,
+                        example_scores=example_scores,
+                        generated_token_ids=generated_token_ids: logits.log_generation(
+                            context=context,
+                            scores=example_scores,
+                            generated_token_ids=generated_token_ids,
+                        ),
+                    ):
+                        close_optional("Gemma logits", logits)
+                        logits = None
+                count += 1
     finally:
         outputs.close()
         close_optional("Gemma token", tokens)

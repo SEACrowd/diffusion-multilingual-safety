@@ -11,7 +11,7 @@ from logging_utils.diffusion_gemma.callback import DiffusionLoggingCallback
 from logging_utils.diffusion_gemma.logits import DiffusionLogitsLogger
 from logging_utils.moe import route_change_rate, summarize_router_output
 from logging_utils.writer import read_jsonl
-from models.common import parse_response_text
+from models.common import parse_response_text, sanitize_generated_token_ids, strip_response_marker_text
 
 try:
     from config_parser import parse_app_config
@@ -28,9 +28,9 @@ class ConfigurationAndDataTests(unittest.TestCase):
         parsed = parse_app_config({"UNRELATED": "value"})
         self.assertEqual(parsed.models_to_run, ("gemma", "diffusion_gemma"))
         self.assertEqual(parsed.thinking_variants, ("non_thinking", "thinking"))
-        self.assertEqual(parsed.dataloader.batch_size, 1)
-        self.assertTrue(parsed.logging.log_logits)
-        self.assertTrue(parsed.logging.log_moe)
+        self.assertEqual(parsed.dataloader.batch_size, 8)
+        self.assertFalse(parsed.logging.log_logits)
+        self.assertFalse(parsed.logging.log_moe)
 
     @unittest.skipIf(parse_app_config is None, "project dependencies are not installed")
     def test_thinking_variants_can_select_one_mode(self) -> None:
@@ -72,6 +72,25 @@ class ResponseParsingTests(unittest.TestCase):
         with self.assertWarns(RuntimeWarning):
             response = parse_response_text(BrokenProcessor(), "raw answer")
         self.assertEqual(response, "raw answer")
+
+    def test_sanitize_drops_pad_and_turn_end_tokens(self) -> None:
+        cleaned = sanitize_generated_token_ids(
+            [10, 11, 106, 0, 0, 0],
+            eos_token_id=1,
+            pad_token_id=0,
+            turn_end_token_id=106,
+        )
+        self.assertEqual(cleaned, [10, 11])
+        self.assertEqual(
+            sanitize_generated_token_ids(
+                [10, 11, 1, 0, 0],
+                eos_token_id=1,
+                pad_token_id=0,
+                turn_end_token_id=106,
+            ),
+            [10, 11, 1],
+        )
+        self.assertEqual(strip_response_marker_text("ok<turn|><pad>"), "ok")
 
 
 class MoeSummaryTests(unittest.TestCase):
@@ -134,7 +153,7 @@ class DiffusionTelemetryTests(unittest.TestCase):
         broken_logger = BrokenLogitsLogger()
         disabled: set[str] = set()
         callback = DiffusionLoggingCallback(
-            context={"run_id": "run"},
+            contexts=[{"run_id": "run"}],
             canvas_logger=None,
             logits_logger=broken_logger,  # type: ignore[arg-type]
             router_tracer=None,
