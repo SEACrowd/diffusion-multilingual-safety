@@ -73,15 +73,20 @@ def run_gemma_inference(
     top_p: float,
     top_k: int,
     log_top_k: int,
+    log_tokens: bool,
     log_logits: bool,
     log_moe: bool,
     save_full_logits: bool,
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    tokens = create_optional(
-        "Gemma token",
-        lambda: GemmaTokenLogger(root / "tokens.jsonl", processor),
+    tokens = (
+        create_optional(
+            "Gemma token",
+            lambda: GemmaTokenLogger(root / "tokens.jsonl", processor),
+        )
+        if log_tokens
+        else None
     )
     logits = (
         create_optional(

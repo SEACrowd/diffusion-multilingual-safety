@@ -44,6 +44,7 @@ class LoggingConfig(BaseModel):
     experiment_id: str | None
     top_k: int = Field(gt=0)
     log_moe: bool
+    log_tokens: bool
     log_logits: bool
     save_full_logits: bool
     seed: int
@@ -136,6 +137,7 @@ def parse_app_config(environ: Mapping[str, str] | None = None) -> AppConfig:
             ),
             top_k=parse_int(env, "LOG_TOP_K", config.LOG_TOP_K),
             log_moe=parse_bool(env, "LOG_MOE", config.LOG_MOE),
+            log_tokens=parse_bool(env, "LOG_TOKENS", config.LOG_TOKENS),
             log_logits=parse_bool(env, "LOG_LOGITS", config.LOG_LOGITS),
             save_full_logits=parse_bool(
                 env,

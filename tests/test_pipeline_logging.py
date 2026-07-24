@@ -28,8 +28,9 @@ class ConfigurationAndDataTests(unittest.TestCase):
         parsed = parse_app_config({"UNRELATED": "value"})
         self.assertEqual(parsed.models_to_run, ("gemma", "diffusion_gemma"))
         self.assertEqual(parsed.dataloader.batch_size, 1)
-        self.assertTrue(parsed.logging.log_logits)
+        self.assertFalse(parsed.logging.log_logits)
         self.assertFalse(parsed.logging.log_moe)
+        self.assertFalse(parsed.logging.log_tokens)
 
     @unittest.skipIf(
         collate_multilingual_safety_batch is None,

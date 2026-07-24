@@ -217,6 +217,7 @@ def run_gemma(
             top_p=config.gemma_generation.top_p,
             top_k=config.gemma_generation.top_k,
             log_top_k=config.logging.top_k,
+            log_tokens=config.logging.log_tokens,
             log_logits=config.logging.log_logits,
             log_moe=config.logging.log_moe,
             save_full_logits=config.logging.save_full_logits,
