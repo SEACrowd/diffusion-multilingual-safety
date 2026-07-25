@@ -1,5 +1,6 @@
 accelerate
-datasets
+# >=2.16 dropped pa.PyExtensionType, which pyarrow 14+ (pulled by vLLM) removed.
+datasets>=2.16.0
 diffusers==0.39.0
 huggingface-hub
 numpy
