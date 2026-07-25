@@ -16,18 +16,20 @@ pip install uv
 uv pip install -r requirements.txt --torch-backend=auto
 ```
 
-`--torch-backend=auto` detects the GPU driver and selects a **matching** CUDA
-build for both PyTorch and vLLM. This is the important part: the vLLM wheel is
+`--torch-backend=auto` reads the GPU driver and selects a **matching** CUDA build
+for both PyTorch and vLLM. This is the important part: the vLLM wheel is
 CUDA-specific and must match PyTorch's CUDA, or you get
-`libcudart.so.<N>: cannot open shared object file`. Pin it explicitly to match a
-preinstalled torch when needed, e.g. `--torch-backend=cu128` for `torch+cu128`.
+`libcudart.so.<N>: cannot open shared object file`. Let `auto` align everything to
+the driver rather than pinning a CUDA suffix by hand (a driver reporting
+`CUDA Version: 13.0` gets cu13 torch + cu13 vLLM automatically).
 
 On a managed environment without a virtualenv (for example a Colab terminal),
-add `--system`:
+add `--system`. If a mismatched torch was already installed, add `--reinstall`
+so it is realigned:
 
 ```bash
 pip install uv
-uv pip install --system -r requirements.txt --torch-backend=cu128
+uv pip install --system --reinstall -r requirements.txt --torch-backend=auto
 ```
 
 vLLM is Linux/GPU only and will not install on Windows. On a dev box without it,

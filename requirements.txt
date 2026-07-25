@@ -16,7 +16,8 @@ python-dotenv
 pydantic
 # vLLM offline inference (Linux/GPU only; DiffusionGemma needs >=0.24.0).
 # The wheel is CUDA-specific and MUST match torch's CUDA, or you get
-# "libcudart.so.<N>: cannot open shared object file". Install the matching build:
-#   pip install vllm --torch-backend=auto   (or =cu128 to match torch 2.x+cu128)
+# "libcudart.so.<N>: cannot open shared object file". Install with uv and let it
+# align both to the driver:  uv pip install -r requirements.txt --torch-backend=auto
+# (add --reinstall if a mismatched torch is already present).
 # Set GEMMA_USE_VLLM=0 / DIFFUSION_GEMMA_USE_VLLM=0 to run without it.
 vllm>=0.24.0
