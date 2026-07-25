@@ -35,6 +35,7 @@ class ConfigurationAndDataTests(unittest.TestCase):
         self.assertFalse(parsed.logging.log_logits)
         self.assertFalse(parsed.logging.log_moe)
         self.assertFalse(parsed.logging.log_tokens)
+        self.assertFalse(parsed.logging.log_canvas)
 
     @unittest.skipIf(resolve_model_kind is None, "project dependencies are not installed")
     def test_resolve_model_kind_detects_diffusion_by_substring(self) -> None:

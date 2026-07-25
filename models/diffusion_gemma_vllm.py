@@ -81,6 +81,7 @@ def run_diffusion_gemma_vllm_inference(
     seed: int,
     gen_length: int,
     entropy_bound: float,
+    enable_thinking: bool,
 ) -> int:
     from vllm import SamplingParams  # noqa: PLC0415 - lazy, see create fn
 
@@ -90,6 +91,7 @@ def run_diffusion_gemma_vllm_inference(
     generation_configuration = {
         "gen_length": gen_length,
         "entropy_bound": entropy_bound,
+        "enable_thinking": enable_thinking,
         "engine": "vllm",
     }
 
@@ -107,11 +109,21 @@ def run_diffusion_gemma_vllm_inference(
             metadata=metadata,
             seed=current_seed,
         )
-        rendered_prompt = processor.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            rendered_prompt = processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking,
+            )
+        except TypeError:
+            # Template doesn't accept enable_thinking -> diffusion has no thinking mode.
+            rendered_prompt = processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
         sampling = SamplingParams(
             temperature=0.0,  # deterministic denoising, matches the entropy-bound sampler
             max_tokens=gen_length,

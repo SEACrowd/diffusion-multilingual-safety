@@ -29,6 +29,8 @@ DIFFUSION_GEMMA_T_MAX = 0.8
 DIFFUSION_GEMMA_ENTROPY_BOUND = 0.1
 DIFFUSION_GEMMA_STABILITY_THRESHOLD = 1
 DIFFUSION_GEMMA_CONFIDENCE_THRESHOLD = 0.005
+# Applied only if the DiffusionGemma chat template supports it; ignored otherwise.
+DIFFUSION_GEMMA_ENABLE_THINKING = True
 
 # vLLM engine parameters (per kind; consumed by models/gemma_vllm.py and
 # models/diffusion_gemma_vllm.py). USE_VLLM=False falls back to the in-process
@@ -55,6 +57,7 @@ LOG_TOP_K = 5
 LOG_MOE = False
 LOG_TOKENS = False
 LOG_LOGITS = False
+LOG_CANVAS = False
 LOG_SAVE_FULL_LOGITS = False
 LOG_SEED = 42
 

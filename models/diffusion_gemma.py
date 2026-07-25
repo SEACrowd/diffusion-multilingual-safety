@@ -81,13 +81,18 @@ def run_diffusion_gemma_inference(
     log_top_k: int,
     log_logits: bool,
     log_moe: bool,
+    log_canvas: bool,
     save_full_logits: bool,
 ) -> int:
     root = Path(logging_root)
     outputs = OutputLogger(root / "outputs.jsonl")
-    canvas = create_optional(
-        "DiffusionGemma canvas",
-        lambda: CanvasLogger(root / "canvas.jsonl", pipeline.processor),
+    canvas = (
+        create_optional(
+            "DiffusionGemma canvas",
+            lambda: CanvasLogger(root / "canvas.jsonl", pipeline.processor),
+        )
+        if log_canvas
+        else None
     )
     logits = (
         create_optional(

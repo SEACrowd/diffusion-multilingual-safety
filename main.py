@@ -333,6 +333,7 @@ def run_diffusion_gemma(
                 seed=config.logging.seed,
                 gen_length=generation.gen_length,
                 entropy_bound=generation.entropy_bound,
+                enable_thinking=generation.enable_thinking,
             )
         finally:
             del engine
@@ -366,6 +367,7 @@ def run_diffusion_gemma(
             log_top_k=config.logging.top_k,
             log_logits=config.logging.log_logits,
             log_moe=config.logging.log_moe,
+            log_canvas=config.logging.log_canvas,
             save_full_logits=config.logging.save_full_logits,
         )
     finally:

@@ -41,6 +41,7 @@ class GemmaGenerationConfig(BaseModel):
 
 class DiffusionGemmaGenerationConfig(BaseModel):
     gen_length: int = Field(gt=0)
+    enable_thinking: bool
     max_denoising_steps: int = Field(gt=0)
     t_min: float = Field(gt=0)
     t_max: float = Field(gt=0)
@@ -56,6 +57,7 @@ class LoggingConfig(BaseModel):
     log_moe: bool
     log_tokens: bool
     log_logits: bool
+    log_canvas: bool
     save_full_logits: bool
     seed: int
 
@@ -115,6 +117,11 @@ def parse_app_config(environ: Mapping[str, str] | None = None) -> AppConfig:
                 "DIFFUSION_GEMMA_GEN_LENGTH",
                 config.DIFFUSION_GEMMA_GEN_LENGTH,
             ),
+            enable_thinking=parse_bool(
+                env,
+                "DIFFUSION_GEMMA_ENABLE_THINKING",
+                config.DIFFUSION_GEMMA_ENABLE_THINKING,
+            ),
             max_denoising_steps=parse_int(
                 env,
                 "DIFFUSION_GEMMA_MAX_DENOISING_STEPS",
@@ -149,6 +156,7 @@ def parse_app_config(environ: Mapping[str, str] | None = None) -> AppConfig:
             log_moe=parse_bool(env, "LOG_MOE", config.LOG_MOE),
             log_tokens=parse_bool(env, "LOG_TOKENS", config.LOG_TOKENS),
             log_logits=parse_bool(env, "LOG_LOGITS", config.LOG_LOGITS),
+            log_canvas=parse_bool(env, "LOG_CANVAS", config.LOG_CANVAS),
             save_full_logits=parse_bool(
                 env,
                 "LOG_SAVE_FULL_LOGITS",

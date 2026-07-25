@@ -108,6 +108,9 @@ def build_smoke_config(
         updates["gemma_generation"] = validated_copy(
             parsed.gemma_generation, enable_thinking=enable_thinking
         )
+        updates["diffusion_gemma_generation"] = validated_copy(
+            parsed.diffusion_gemma_generation, enable_thinking=enable_thinking
+        )
     return validated_copy(parsed, **updates)
 
 
