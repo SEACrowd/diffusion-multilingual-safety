@@ -43,6 +43,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Models to run (default: both models).",
     )
     parser.add_argument(
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override GEMMA_ENABLE_THINKING (gemma only). Default: use config.",
+    )
+    parser.add_argument(
         "--experiment-id",
         help="Optional fixed experiment ID; by default a unique smoke-test ID is used.",
     )
@@ -66,6 +72,7 @@ def build_smoke_config(
     models: Sequence[str] = MODEL_CHOICES,
     experiment_id: str | None = None,
     output_root: str | None = None,
+    enable_thinking: bool | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> AppConfig:
     """Build a normal application config with only smoke-run limits changed."""
@@ -89,15 +96,19 @@ def build_smoke_config(
         logging_updates["root"] = output_root
     logging_config = validated_copy(parsed.logging, **logging_updates)
 
-    return validated_copy(
-        parsed,
-        models_to_run=tuple(dict.fromkeys(models)),
+    updates: dict[str, Any] = {
+        "models_to_run": tuple(dict.fromkeys(models)),
         # The manifest is already capped.  Disabling the batch cap guarantees
         # that batch size cannot make a 10-example smoke test stop early.
-        inference_max_batches=None,
-        data=data_config,
-        logging=logging_config,
-    )
+        "inference_max_batches": None,
+        "data": data_config,
+        "logging": logging_config,
+    }
+    if enable_thinking is not None:
+        updates["gemma_generation"] = validated_copy(
+            parsed.gemma_generation, enable_thinking=enable_thinking
+        )
+    return validated_copy(parsed, **updates)
 
 
 def validated_copy(model: Any, **updates: Any) -> Any:
@@ -166,6 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         models=args.models,
         experiment_id=args.experiment_id,
         output_root=args.output_root,
+        enable_thinking=args.thinking,
         environ=os.environ,
     )
 
@@ -173,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Starting pipeline smoke test: "
         f"samples={config.data.max_samples}, "
         f"models={','.join(config.models_to_run)}, "
+        f"thinking={config.gemma_generation.enable_thinking}, "
         f"experiment_id={config.logging.experiment_id}"
     )
     # Import lazily so `--help` and configuration tests do not load model stacks.
