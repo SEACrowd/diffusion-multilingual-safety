@@ -14,3 +14,6 @@ tqdm
 transformers==5.13.0
 python-dotenv
 pydantic
+# vLLM offline inference (Linux/GPU only; DiffusionGemma needs >=0.24.0).
+# Set GEMMA_USE_VLLM=0 / DIFFUSION_GEMMA_USE_VLLM=0 to run without it.
+vllm>=0.24.0
