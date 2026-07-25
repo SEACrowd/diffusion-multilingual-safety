@@ -1,45 +1,43 @@
 # Gemma 4 Multilingual Safety Inference
 
 Runs the same pinned multilingual-safety examples through Gemma 4 26B A4B and
-DiffusionGemma 26B A4B. Each model writes separate JSONL output, logit, and
-Mixture-of-Experts traces for direct inspection of each model's response.
+DiffusionGemma 26B A4B by default via vLLM offline batched inference. Each model
+writes a separate `outputs.jsonl` response file for direct inspection.
 
 ## Installation
 
-Create and activate a Python 3.11 environment:
+Use [uv](https://docs.astral.sh/uv/). It installs everything, including the
+CUDA-matched vLLM wheel, in one command.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+Install uv, then install the dependencies:
+
+```bash
+pip install uv
+uv pip install -r requirements.txt --torch-backend=auto
 ```
 
-Upgrade pip before installing anything else:
+`--torch-backend=auto` detects the GPU driver and selects a **matching** CUDA
+build for both PyTorch and vLLM. This is the important part: the vLLM wheel is
+CUDA-specific and must match PyTorch's CUDA, or you get
+`libcudart.so.<N>: cannot open shared object file`. Pin it explicitly to match a
+preinstalled torch when needed, e.g. `--torch-backend=cu128` for `torch+cu128`.
 
-```powershell
-python -m pip install --upgrade pip
+On a managed environment without a virtualenv (for example a Colab terminal),
+add `--system`:
+
+```bash
+pip install uv
+uv pip install --system -r requirements.txt --torch-backend=cu128
 ```
 
-Install the newest stable PyTorch release currently published for the required
-CUDA 13.0 wheel index:
-
-```powershell
-python -m pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu130
-```
-
-PyTorch 2.13 uses CUDA 13.2 wheels. The command above intentionally remains on
-the newest stable `cu130` build.
-
-Install the remaining dependencies. The requirements pin the stable releases
-needed for DiffusionGemma: Transformers 5.13.0 and Diffusers 0.39.0.
-
-```powershell
-python -m pip install -r requirements.txt
-```
+vLLM is Linux/GPU only and will not install on Windows. On a dev box without it,
+run the in-process HuggingFace path instead by setting `GEMMA_USE_VLLM=0` and
+`DIFFUSION_GEMMA_USE_VLLM=0` (see below).
 
 Verify CUDA:
 
-```powershell
-python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 ```
 
 ## Authentication
