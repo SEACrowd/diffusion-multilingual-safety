@@ -14,10 +14,11 @@ from logging_utils.writer import read_jsonl
 from models.common import parse_response_text
 
 try:
-    from config_parser import parse_app_config
+    from config_parser import parse_app_config, resolve_model_kind
     from dataloader.collate import collate_multilingual_safety_batch
 except ModuleNotFoundError:
     parse_app_config = None
+    resolve_model_kind = None
     collate_multilingual_safety_batch = None
 
 
@@ -26,11 +27,23 @@ class ConfigurationAndDataTests(unittest.TestCase):
     def test_default_config_runs_both_models(self) -> None:
         assert parse_app_config is not None
         parsed = parse_app_config({"UNRELATED": "value"})
-        self.assertEqual(parsed.models_to_run, ("gemma", "diffusion_gemma"))
+        self.assertEqual(
+            parsed.models_to_run,
+            ("google/gemma-4-26B-A4B-it", "google/diffusiongemma-26B-A4B-it"),
+        )
         self.assertEqual(parsed.dataloader.batch_size, 1)
         self.assertFalse(parsed.logging.log_logits)
         self.assertFalse(parsed.logging.log_moe)
         self.assertFalse(parsed.logging.log_tokens)
+
+    @unittest.skipIf(resolve_model_kind is None, "project dependencies are not installed")
+    def test_resolve_model_kind_detects_diffusion_by_substring(self) -> None:
+        assert resolve_model_kind is not None
+        self.assertEqual(
+            resolve_model_kind("google/diffusiongemma-26B-A4B-it"), "diffusion_gemma"
+        )
+        self.assertEqual(resolve_model_kind("google/gemma-4-26B-A4B-it"), "gemma")
+        self.assertEqual(resolve_model_kind("Org/DIFFUSION-Model"), "diffusion_gemma")
 
     @unittest.skipIf(
         collate_multilingual_safety_batch is None,

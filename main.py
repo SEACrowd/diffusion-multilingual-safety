@@ -19,17 +19,37 @@ import transformers
 from dotenv import load_dotenv
 from huggingface_hub import HfApi
 
-from config_parser import AppConfig, parse_app_config
+from config_parser import AppConfig, ModelConfig, parse_app_config, resolve_model_kind
 from dataloader import create_manifest_dataloader, materialize_input_manifest
 from logging_utils.writer import write_json
 from models.diffusion_gemma import (
     create_diffusion_gemma_pipeline,
     run_diffusion_gemma_inference,
 )
+from models.diffusion_gemma_vllm import (
+    create_diffusion_gemma_vllm_engine,
+    run_diffusion_gemma_vllm_inference,
+)
 from models.gemma import create_gemma_model, run_gemma_inference
+from models.gemma_vllm import create_gemma_vllm_engine, run_gemma_vllm_inference
 
 
 EXPERIMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def model_config_for(config: AppConfig, kind: str, model_name: str) -> ModelConfig:
+    """Per-kind template with model/processor overridden by the raw repo id."""
+    template = config.gemma_model if kind == "gemma" else config.diffusion_gemma_model
+    # Follow the repo id for the processor unless an explicit *_PROCESSOR_NAME
+    # override diverged it from the template's model_name.
+    processor = (
+        model_name
+        if template.processor_name == template.model_name
+        else template.processor_name
+    )
+    return template.model_copy(
+        update={"model_name": model_name, "processor_name": processor}
+    )
 
 
 def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -131,7 +151,10 @@ def main(config: AppConfig) -> dict[str, int]:
 
     completed: dict[str, int] = {}
     failures: dict[str, dict[str, str]] = {}
-    for model_kind in config.models_to_run:
+    for model_name in config.models_to_run:
+        kind = resolve_model_kind(model_name)
+        model_config = model_config_for(config, kind, model_name)
+        subdir = model_name.split("/")[-1]
         dataloader = create_manifest_dataloader(
             inputs_path,
             batch_size=config.dataloader.batch_size,
@@ -139,34 +162,39 @@ def main(config: AppConfig) -> dict[str, int]:
             pin_memory=config.dataloader.pin_memory,
         )
         try:
-            if model_kind == "gemma":
-                completed[model_kind] = run_gemma(
+            if kind == "gemma":
+                completed[model_name] = run_gemma(
                     config,
+                    model_config,
                     dataloader,
                     experiment_id,
                     experiment_root,
-                    model_revisions[model_kind],
+                    subdir,
+                    model_revisions[model_name],
                     hf_token,
                 )
-            elif model_kind == "diffusion_gemma":
-                completed[model_kind] = run_diffusion_gemma(
+            elif kind == "diffusion_gemma":
+                completed[model_name] = run_diffusion_gemma(
                     config,
+                    model_config,
                     dataloader,
                     experiment_id,
                     experiment_root,
-                    model_revisions[model_kind],
+                    subdir,
+                    model_revisions[model_name],
                     hf_token,
                 )
         except Exception as error:
             error_record = {
-                "model_kind": model_kind,
+                "model_name": model_name,
+                "model_kind": kind,
                 "error_type": type(error).__name__,
                 "message": str(error),
                 "traceback": traceback.format_exc(),
                 "failed_at": datetime.now(UTC).isoformat(),
             }
-            failures[model_kind] = error_record
-            model_root = experiment_root / model_kind
+            failures[model_name] = error_record
+            model_root = experiment_root / subdir
             model_root.mkdir(parents=True, exist_ok=True)
             write_json(model_root / "error.json", error_record)
             print(error_record["traceback"], file=sys.stderr, flush=True)
@@ -185,18 +213,57 @@ def main(config: AppConfig) -> dict[str, int]:
 
 def run_gemma(
     config: AppConfig,
+    model_config: ModelConfig,
     dataloader,
     experiment_id: str,
     experiment_root: Path,
+    subdir: str,
     revision: str,
     token: str | None,
 ) -> int:
+    generation = config.gemma_generation
+    logging_root = experiment_root / subdir
+    if model_config.use_vllm:
+        engine, processor = create_gemma_vllm_engine(
+            model_name=model_config.model_name,
+            processor_name=model_config.processor_name,
+            revision=revision,
+            dtype=model_config.dtype,
+            tensor_parallel_size=model_config.tensor_parallel_size,
+            max_num_seqs=model_config.max_num_seqs,
+            gpu_memory_utilization=model_config.gpu_memory_utilization,
+            trust_remote_code=model_config.trust_remote_code,
+            max_model_len=model_config.max_model_len,
+            token=token,
+        )
+        try:
+            return run_gemma_vllm_inference(
+                engine,
+                processor,
+                dataloader,
+                experiment_id=experiment_id,
+                model_id=model_config.model_name,
+                model_revision=revision,
+                logging_root=logging_root,
+                max_batches=config.inference_max_batches,
+                seed=config.logging.seed,
+                max_new_tokens=generation.max_new_tokens,
+                enable_thinking=generation.enable_thinking,
+                do_sample=generation.do_sample,
+                temperature=generation.temperature,
+                top_p=generation.top_p,
+                top_k=generation.top_k,
+            )
+        finally:
+            del engine
+            del processor
+
     model, processor = create_gemma_model(
-        model_name=config.gemma_model.model_name,
-        processor_name=config.gemma_model.processor_name,
+        model_name=model_config.model_name,
+        processor_name=model_config.processor_name,
         revision=revision,
-        dtype=config.gemma_model.dtype,
-        device_map=config.gemma_model.device_map,
+        dtype=model_config.dtype,
+        device_map=model_config.device_map,
         token=token,
     )
     try:
@@ -205,17 +272,17 @@ def run_gemma(
             processor,
             dataloader,
             experiment_id=experiment_id,
-            model_id=config.gemma_model.model_name,
+            model_id=model_config.model_name,
             model_revision=revision,
-            logging_root=experiment_root / "gemma",
+            logging_root=logging_root,
             max_batches=config.inference_max_batches,
             seed=config.logging.seed,
-            max_new_tokens=config.gemma_generation.max_new_tokens,
-            enable_thinking=config.gemma_generation.enable_thinking,
-            do_sample=config.gemma_generation.do_sample,
-            temperature=config.gemma_generation.temperature,
-            top_p=config.gemma_generation.top_p,
-            top_k=config.gemma_generation.top_k,
+            max_new_tokens=generation.max_new_tokens,
+            enable_thinking=generation.enable_thinking,
+            do_sample=generation.do_sample,
+            temperature=generation.temperature,
+            top_p=generation.top_p,
+            top_k=generation.top_k,
             log_top_k=config.logging.top_k,
             log_tokens=config.logging.log_tokens,
             log_logits=config.logging.log_logits,
@@ -229,21 +296,57 @@ def run_gemma(
 
 def run_diffusion_gemma(
     config: AppConfig,
+    model_config: ModelConfig,
     dataloader,
     experiment_id: str,
     experiment_root: Path,
+    subdir: str,
     revision: str,
     token: str | None,
 ) -> int:
+    generation = config.diffusion_gemma_generation
+    logging_root = experiment_root / subdir
+    if model_config.use_vllm:
+        engine, processor = create_diffusion_gemma_vllm_engine(
+            model_name=model_config.model_name,
+            processor_name=model_config.processor_name,
+            revision=revision,
+            gen_length=generation.gen_length,
+            entropy_bound=generation.entropy_bound,
+            tensor_parallel_size=model_config.tensor_parallel_size,
+            max_num_seqs=model_config.max_num_seqs,
+            gpu_memory_utilization=model_config.gpu_memory_utilization,
+            trust_remote_code=model_config.trust_remote_code,
+            max_model_len=model_config.max_model_len,
+            token=token,
+        )
+        try:
+            return run_diffusion_gemma_vllm_inference(
+                engine,
+                processor,
+                dataloader,
+                experiment_id=experiment_id,
+                model_id=model_config.model_name,
+                model_revision=revision,
+                logging_root=logging_root,
+                max_batches=config.inference_max_batches,
+                seed=config.logging.seed,
+                gen_length=generation.gen_length,
+                entropy_bound=generation.entropy_bound,
+            )
+        finally:
+            del engine
+            del processor
+
     pipeline = create_diffusion_gemma_pipeline(
-        model_name=config.diffusion_gemma_model.model_name,
-        processor_name=config.diffusion_gemma_model.processor_name,
+        model_name=model_config.model_name,
+        processor_name=model_config.processor_name,
         revision=revision,
-        dtype=config.diffusion_gemma_model.dtype,
-        device_map=config.diffusion_gemma_model.device_map,
-        entropy_bound=config.diffusion_gemma_generation.entropy_bound,
-        t_max=config.diffusion_gemma_generation.t_max,
-        t_min=config.diffusion_gemma_generation.t_min,
+        dtype=model_config.dtype,
+        device_map=model_config.device_map,
+        entropy_bound=generation.entropy_bound,
+        t_max=generation.t_max,
+        t_min=generation.t_min,
         token=token,
     )
     try:
@@ -251,21 +354,15 @@ def run_diffusion_gemma(
             pipeline,
             dataloader,
             experiment_id=experiment_id,
-            model_id=config.diffusion_gemma_model.model_name,
+            model_id=model_config.model_name,
             model_revision=revision,
-            logging_root=experiment_root / "diffusion_gemma",
+            logging_root=logging_root,
             max_batches=config.inference_max_batches,
             seed=config.logging.seed,
-            gen_length=config.diffusion_gemma_generation.gen_length,
-            num_inference_steps=(
-                config.diffusion_gemma_generation.max_denoising_steps
-            ),
-            stability_threshold=(
-                config.diffusion_gemma_generation.stability_threshold
-            ),
-            confidence_threshold=(
-                config.diffusion_gemma_generation.confidence_threshold
-            ),
+            gen_length=generation.gen_length,
+            num_inference_steps=generation.max_denoising_steps,
+            stability_threshold=generation.stability_threshold,
+            confidence_threshold=generation.confidence_threshold,
             log_top_k=config.logging.top_k,
             log_logits=config.logging.log_logits,
             log_moe=config.logging.log_moe,
@@ -278,15 +375,14 @@ def run_diffusion_gemma(
 def resolve_model_revisions(config: AppConfig, token: str | None) -> dict[str, str]:
     api = HfApi(token=token)
     revisions: dict[str, str] = {}
-    if "gemma" in config.models_to_run:
-        revisions["gemma"] = api.model_info(
-            config.gemma_model.model_name,
-            revision=config.gemma_model.revision,
-        ).sha
-    if "diffusion_gemma" in config.models_to_run:
-        revisions["diffusion_gemma"] = api.model_info(
-            config.diffusion_gemma_model.model_name,
-            revision=config.diffusion_gemma_model.revision,
+    for model_name in config.models_to_run:
+        kind = resolve_model_kind(model_name)
+        template = (
+            config.gemma_model if kind == "gemma" else config.diffusion_gemma_model
+        )
+        revisions[model_name] = api.model_info(
+            model_name,
+            revision=template.revision,
         ).sha
     return revisions
 

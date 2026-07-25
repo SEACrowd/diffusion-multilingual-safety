@@ -21,7 +21,10 @@ class SmokePipelineConfigurationTests(unittest.TestCase):
         self.assertEqual(config.data.max_samples, 10)
         self.assertFalse(config.data.shuffle)
         self.assertIsNone(config.inference_max_batches)
-        self.assertEqual(config.models_to_run, ("gemma", "diffusion_gemma"))
+        self.assertEqual(
+            config.models_to_run,
+            ("google/gemma-4-26B-A4B-it", "google/diffusiongemma-26B-A4B-it"),
+        )
         self.assertEqual(config.logging.experiment_id, "smoke-test")
 
     @unittest.skipIf(build_smoke_config is None, "project dependencies are not installed")
@@ -29,13 +32,13 @@ class SmokePipelineConfigurationTests(unittest.TestCase):
         assert build_smoke_config is not None
         config = build_smoke_config(
             samples=2,
-            models=("gemma",),
+            models=("google/gemma-4-26B-A4B-it",),
             experiment_id="smoke-gemma",
             output_root="smoke-logs",
             environ={"UNRELATED": "value"},
         )
 
-        self.assertEqual(config.models_to_run, ("gemma",))
+        self.assertEqual(config.models_to_run, ("google/gemma-4-26B-A4B-it",))
         self.assertEqual(config.logging.root, "smoke-logs")
 
 

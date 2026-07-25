@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
 import config
 from dataloader import MultilingualSafetyDataConfig
+
+
+def resolve_model_kind(model_name: str) -> str:
+    """Map a raw HF repo id to its internal per-kind config label."""
+    return "diffusion_gemma" if "diffusion" in model_name.lower() else "gemma"
 
 
 class ModelConfig(BaseModel):
@@ -18,6 +22,12 @@ class ModelConfig(BaseModel):
     revision: str
     dtype: str
     device_map: str | None
+    use_vllm: bool
+    tensor_parallel_size: int = Field(gt=0)
+    max_num_seqs: int = Field(gt=0)
+    gpu_memory_utilization: float = Field(gt=0, le=1)
+    trust_remote_code: bool
+    max_model_len: int | None
 
 
 class GemmaGenerationConfig(BaseModel):
@@ -57,7 +67,7 @@ class DataLoaderConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    models_to_run: tuple[Literal["gemma", "diffusion_gemma"], ...]
+    models_to_run: tuple[str, ...]
     inference_max_batches: int | None = Field(default=None, gt=0)
     gemma_model: ModelConfig
     diffusion_gemma_model: ModelConfig
@@ -208,6 +218,32 @@ def parse_model_config(env: Mapping[str, str], prefix: str, default_name: str) -
         revision=parse_str(env, f"{prefix}_MODEL_REVISION", default_revision),
         dtype=parse_str(env, f"{prefix}_MODEL_DTYPE", default_dtype),
         device_map=parse_optional_str(env, f"{prefix}_MODEL_DEVICE_MAP", default_device_map),
+        use_vllm=parse_bool(env, f"{prefix}_USE_VLLM", getattr(config, f"{prefix}_USE_VLLM")),
+        tensor_parallel_size=parse_int(
+            env,
+            f"{prefix}_TENSOR_PARALLEL_SIZE",
+            getattr(config, f"{prefix}_TENSOR_PARALLEL_SIZE"),
+        ),
+        max_num_seqs=parse_int(
+            env,
+            f"{prefix}_MAX_NUM_SEQS",
+            getattr(config, f"{prefix}_MAX_NUM_SEQS"),
+        ),
+        gpu_memory_utilization=parse_float(
+            env,
+            f"{prefix}_GPU_MEMORY_UTILIZATION",
+            getattr(config, f"{prefix}_GPU_MEMORY_UTILIZATION"),
+        ),
+        trust_remote_code=parse_bool(
+            env,
+            f"{prefix}_TRUST_REMOTE_CODE",
+            getattr(config, f"{prefix}_TRUST_REMOTE_CODE"),
+        ),
+        max_model_len=parse_optional_int(
+            env,
+            f"{prefix}_MAX_MODEL_LEN",
+            getattr(config, f"{prefix}_MAX_MODEL_LEN"),
+        ),
     )
 
 

@@ -18,10 +18,11 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+import config
 from config_parser import AppConfig, parse_app_config
 
 
-MODEL_CHOICES = ("gemma", "diffusion_gemma")
+MODEL_CHOICES = tuple(config.MODELS_TO_RUN)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -148,7 +149,7 @@ def validate_completed_run(config: AppConfig, completed: Mapping[str, int]) -> P
     for model in config.models_to_run:
         required_paths.extend(
             [
-                experiment_root / model / "outputs.jsonl",
+                experiment_root / model.split("/")[-1] / "outputs.jsonl",
             ]
         )
     missing_paths = [str(path) for path in required_paths if not path.is_file()]

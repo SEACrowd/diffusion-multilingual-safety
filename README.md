@@ -89,17 +89,25 @@ configuration. A 40 GB A100 requires sharding, quantization, or offload.
 Important defaults:
 
 ```python
-MODELS_TO_RUN = ["gemma", "diffusion_gemma"]
+MODELS_TO_RUN = ["google/gemma-4-26B-A4B-it", "google/diffusiongemma-26B-A4B-it"]
 INFERENCE_MAX_BATCHES = 1
-LOG_MOE = True
-LOG_LOGITS = True
-LOG_SAVE_FULL_LOGITS = False
+GEMMA_USE_VLLM = True
+DIFFUSION_GEMMA_USE_VLLM = True
+LOG_MOE = False
+LOG_TOKENS = False
+LOG_LOGITS = False
 ```
 
-Final model responses, Gemma token events, and DiffusionGemma canvas steps remain
-enabled together with compact logit and MoE telemetry. Full-vocabulary tensor
-dumps remain disabled because of their extreme storage cost. All auxiliary
-telemetry is guarded so a logging failure cannot discard a completed response.
+`MODELS_TO_RUN` holds raw Hugging Face repo ids. Any id containing `diffusion`
+(case-insensitive) runs the DiffusionGemma path; every other id runs the
+autoregressive Gemma path. Both default to vLLM offline batched inference for
+throughput; set the matching `*_USE_VLLM = False` to fall back to the in-process
+HuggingFace runner (the only path that works without vLLM, e.g. on Windows).
+
+Logging is response-only by default: only `outputs.jsonl` is written. The heavy
+per-token, per-logit, MoE, and DiffusionGemma canvas traces are disabled (and are
+unavailable on the vLLM path, which runs the model out-of-process). Re-enable a
+trace on the HuggingFace path with its env flag, for example `LOG_LOGITS=1`.
 
 ## Ten-example smoke test
 
@@ -119,7 +127,7 @@ Useful overrides:
 
 ```powershell
 # Try only two records with Gemma first
-python smoke_test_pipeline.py --samples 2 --models gemma
+python smoke_test_pipeline.py --samples 2 --models google/gemma-4-26B-A4B-it
 
 # Run both models on 10 records under a recognizable ID
 python smoke_test_pipeline.py --experiment-id smoke-manual-10
@@ -145,17 +153,16 @@ logging/<experiment_id>/
   manifest.json
   dataset.json
   inputs.jsonl
-  gemma/
+  gemma-4-26B-A4B-it/
     outputs.jsonl
-    tokens.jsonl
-    logits.jsonl
-    moe.jsonl
-  diffusion_gemma/
+  diffusiongemma-26B-A4B-it/
     outputs.jsonl
-    canvas.jsonl
-    logits.jsonl
-    moe.jsonl
 ```
+
+Each model writes to a subdirectory named after the last path segment of its repo
+id. Optional trace files (`tokens.jsonl`, `logits.jsonl`, `moe.jsonl`,
+`canvas.jsonl`) appear only when their env flag is set and the HuggingFace path is
+used.
 
 `outputs.jsonl` is the primary result. It contains one JSON object per completed
 dataset ID. The clean answer is in `response` (and the compatibility alias

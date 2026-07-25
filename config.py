@@ -1,6 +1,6 @@
 """Non-secret default configuration values."""
 
-MODELS_TO_RUN = ["gemma", "diffusion_gemma"]
+MODELS_TO_RUN = ["google/gemma-4-26B-A4B-it", "google/diffusiongemma-26B-A4B-it"]
 INFERENCE_MAX_BATCHES = 1
 
 GEMMA_MODEL_NAME = "google/gemma-4-26B-A4B-it"
@@ -29,6 +29,25 @@ DIFFUSION_GEMMA_T_MAX = 0.8
 DIFFUSION_GEMMA_ENTROPY_BOUND = 0.1
 DIFFUSION_GEMMA_STABILITY_THRESHOLD = 1
 DIFFUSION_GEMMA_CONFIDENCE_THRESHOLD = 0.005
+
+# vLLM engine parameters (per kind; consumed by models/gemma_vllm.py and
+# models/diffusion_gemma_vllm.py). USE_VLLM=False falls back to the in-process
+# HuggingFace path in models/gemma.py / models/diffusion_gemma.py.
+GEMMA_USE_VLLM = True
+GEMMA_TENSOR_PARALLEL_SIZE = 1
+GEMMA_MAX_NUM_SEQS = 256
+GEMMA_GPU_MEMORY_UTILIZATION = 0.9
+GEMMA_TRUST_REMOTE_CODE = False
+GEMMA_MAX_MODEL_LEN = None
+
+DIFFUSION_GEMMA_USE_VLLM = True
+DIFFUSION_GEMMA_TENSOR_PARALLEL_SIZE = 1
+# ponytail: diffusion keeps per-request canvas/history buffers on GPU, so vLLM's
+# recipe caps concurrency low (~4). Raise only while watching for OOM.
+DIFFUSION_GEMMA_MAX_NUM_SEQS = 4
+DIFFUSION_GEMMA_GPU_MEMORY_UTILIZATION = 0.85
+DIFFUSION_GEMMA_TRUST_REMOTE_CODE = False
+DIFFUSION_GEMMA_MAX_MODEL_LEN = None
 
 LOGGING_ROOT = "logging"
 LOGGING_EXPERIMENT_ID = None
